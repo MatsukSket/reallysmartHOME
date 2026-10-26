@@ -1,0 +1,20 @@
+@startuml skinparam style strictuml skinparam SequenceMessageAlign center skinparam responseMessageBelowArrow true
+actor "Пользователь" as User participant "Web frontend" as Web participant "Godot" as Godot participant "IoT Gateway" as IoT participant "FastAPI backend" as API database "SQLite" as DB database "ChromaDB" as RAG participant "LLM" as LLM
+== Обработка телеметрии и ошибок от устройств == Godot -> IoT : Устройство с id:123 сообщает об ошибке: E04 activate IoT IoT -> API : Переслать нормализованное событие/ошибку activate API API -> DB : Обновить состояние устройства в БД activate DB DB --> API : Подтверждение записи deactivate DB API --> IoT : Подтверждение deactivate API IoT --> Godot : Подтверждение получения deactivate IoT API ->> Web : Обновить статус на дашборде (WebSocket/SSE)
+== Взаимодействие с пользователем через чат == User -> Web : Пишет в чат:\n"Котел выдал E04 и дома душно, что делать?" activate Web Web -> API : Передать сообщение пользователя activate API
+API -> DB : Запрос текущего среза состояний дома activate DB DB --> API : Текущие параметры датчиков и приборов deactivate DB
+API -> RAG : Поиск контекста activate RAG RAG -> RAG : Векторизация запроса, \n расчет косинусного сходства RAG --> API : Топ фрагментов:\n1. Мануал котла (код E04)\n2. Спецификация кондиционера deactivate RAG
+API -> LLM : Запрос генерации:\nСистемный промпт + состояние дома + чанки RAG + вопрос activate LLM LLM -> LLM : Синтез ответа и команд, их валидация LLM --> API : Валидный JSON с инструкцией к действию deactivate LLM
+alt Список управляющих команд (commands) не пуст API -> DB : Обновить состояние устройств в БД activate DB DB --> API : подтверждение записи deactivate DB
+API -> IoT : Передать команды управления устройствами
+activate IoT
+IoT ->> Godot : Отправить команду активации/изменения
+activate Godot
+Godot -> Godot : Обновление состояния в симуляции
+deactivate Godot
+IoT --> API : Подтверждение выполнения команд
+deactivate IoT
+end
+API --> Web : Ответ пользователю deactivate API
+Web --> User : Отображение ответа в чате, обновление состояния устройств на дашборде deactivate Web
+@enduml

@@ -2,13 +2,20 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Literal
 
 class DeviceCommand(BaseModel):
-    """Команда для изменения состояния прибора в Godot"""
-    device_id: str = Field(description="Уникальный идентификатор устройства, например water_valve_main")
-    action: Literal["SET", "TOGGLE"] = Field(description="Тип действия")
-    params: Dict[str, Any] = Field(default_factory=dict, description="Параметры команды, например {'state': 'closed'}")
+    device_id: str
+    action: Literal["SET", "TOGGLE"]
+    params: Dict[str, Any] = Field(default_factory=dict)
+    # Критически важное поле:
+    requires_confirmation: bool = Field(
+        default=False, 
+        description="True, если действие потенциально опасно (газ, подпитка водой, аварийный сброс)"
+    )
 
 class SolverResponse(BaseModel):
-    """Итоговый структурированный ответ от LLM"""
-    reply: str = Field(description="Текстовый ответ пользователю на естественном языке")
-    sources: List[str] = Field(default_factory=list, description="Список имен файлов-источников, использованных для ответа")
-    commands: List[DeviceCommand] = Field(default_factory=list, description="Список управляющих команд для симуляции")
+    reply: str
+    sources: List[str] = Field(default_factory=list)
+    commands: List[DeviceCommand] = Field(default_factory=list)
+    # Статус намерения: информационный ответ, штатная команда или запрос действия
+    intent_type: Literal["INFO_ONLY", "DIRECT_ACTION", "ACTION_REQUIRES_CONFIRMATION"] = Field(
+        description="Тип взаимодействия: только справка, прямое действие или действие с подтверждением"
+    )

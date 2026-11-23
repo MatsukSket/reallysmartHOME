@@ -1,0 +1,35 @@
+{
+  "devices": [
+    {
+      "id": 123, "type": "boiler",
+      "native": {"godot": "Kitchen/Boiler", "zigbee2mqtt": "boiler"},
+      "commands": {"set_state": {
+        "power": {"enum": ["on", "off"]},
+        "target_temp": {"min": 30, "max": 80}
+      }},
+      "telemetry_ranges": {"temperature": [-40, 120], "pressure": [0, 6]}
+    },
+    {
+      "id": 124, "type": "air_conditioner",
+      "native": {"godot": "Living/AC", "zigbee2mqtt": "ac_living"},
+      "commands": {"set_state": {
+        "power": {"enum": ["on", "off"]},
+        "target_temp": {"min": 16, "max": 30},
+        "mode": {"enum": ["cool", "heat", "fan", "auto"]}
+      }},
+      "telemetry_ranges": {"temperature": [-40, 80]},
+      "attr_map": {"zigbee2mqtt": {"target_temp": "occupied_cooling_setpoint", "mode": "system_mode"}}
+    },
+    {
+      "id": 125, "type": "water_valve",
+      "native": {"godot": "Bath/WaterValve", "zigbee2mqtt": "water_valve"},
+      "commands": {"set_state": {"power": {"enum": ["on", "off"]}}}
+    },
+    {
+      "id": 126, "type": "leak_sensor",
+      "native": {"godot": "Bath/LeakSensor", "zigbee2mqtt": "leak_sensor"},
+      "commands": {},
+      "telemetry_ranges": {"humidity": [0, 100], "battery": [0, 100]}
+    }
+  ]
+}

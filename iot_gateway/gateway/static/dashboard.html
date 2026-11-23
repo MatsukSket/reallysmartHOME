@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IoT Gateway — демо-панель</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#1c1f24;--muted:#6b7280;--line:#e3e6ea;--ok:#15803d;--bad:#b91c1c;--warn:#b45309;--acc:#2563eb}
+@media (prefers-color-scheme:dark){:root{--bg:#14161a;--card:#1d2026;--text:#e8eaed;--muted:#9aa1ab;--line:#2c3038;--ok:#4ade80;--bad:#f87171;--warn:#fbbf24;--acc:#60a5fa}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+header{display:flex;gap:12px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+header h1{font-size:16px;margin:0;flex:1}
+.pill{padding:3px 10px;border-radius:99px;font-size:12px;border:1px solid var(--line);color:var(--muted)}
+.pill.on{color:var(--ok);border-color:var(--ok)} .pill.off{color:var(--bad);border-color:var(--bad)}
+main{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:16px;padding:16px 20px}
+@media(max-width:900px){main{grid-template-columns:1fr}}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+.card.alert{border-color:var(--bad);box-shadow:0 0 0 2px color-mix(in srgb,var(--bad) 25%,transparent)}
+.card h3{margin:0 0 2px;font-size:15px} .addr{color:var(--muted);font-size:12px;margin-bottom:8px}
+.kv{display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px dashed var(--line)}
+.kv span:first-child{color:var(--muted)} .big{font-size:22px;font-weight:600}
+.err{margin-top:8px;padding:6px 8px;border-radius:8px;background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad)}
+form{margin-top:10px;display:grid;gap:6px}
+label{display:flex;justify-content:space-between;gap:8px;align-items:center;color:var(--muted)}
+select,input{width:110px;padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
+button{padding:6px 10px;border:0;border-radius:8px;background:var(--acc);color:#fff;cursor:pointer;font-weight:600}
+button:hover{opacity:.9}
+.log{background:var(--card);border:1px solid var(--line);border-radius:12px;height:calc(100vh - 110px);overflow:auto;padding:6px 10px;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace}
+.log div{padding:2px 0;border-bottom:1px solid var(--line);word-break:break-word}
+.t{color:var(--muted)} .k-error{color:var(--bad);font-weight:700} .k-state{color:var(--acc)} .k-telemetry{color:var(--muted)}
+.s-confirmed{color:var(--ok);font-weight:700} .s-rejected,.s-timeout,.s-unavailable,.s-failed{color:var(--bad);font-weight:700}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0 0 8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>IoT Gateway — демо-панель</h1>
+  <span class="pill" id="adapter">адаптер: …</span>
+  <span class="pill" id="conn">транспорт: …</span>
+  <label class="pill"><input type="checkbox" id="showTel" style="width:auto"> телеметрия в журнале</label>
+</header>
+<main>
+  <section><h2>Устройства</h2><div class="grid" id="grid"></div></section>
+  <section><h2>Журнал (события и квитанции)</h2><div class="log" id="log"></div></section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const devs = {};            // id -> {meta, state, telemetry, last_error}
+const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const fmt = v => typeof v === 'number' ? (Math.round(v*10)/10) : v;
+
+function log(html){
+  const d = document.createElement('div');
+  d.innerHTML = `<span class="t">${new Date().toLocaleTimeString()}</span> ${html}`;
+  const box = $('#log'); box.prepend(d);
+  while (box.children.length > 300) box.lastChild.remove();
+}
+
+function render(id){
+  const d = devs[id]; let el = document.getElementById('dev'+id);
+  if (!el){
+    el = document.createElement('div'); el.className='card'; el.id='dev'+id; $('#grid').append(el);
+    el.innerHTML = `<h3>${esc(d.meta.type)} #${id}</h3><div class="addr">${esc(d.meta.address||'')}</div>
+      <div class="vals"></div><div class="errbox"></div><form></form>`;
+    const f = el.querySelector('form'); const rules = (d.meta.rules||{}).set_state || {};
+    for (const [p, r] of Object.entries(rules)){
+      const lab = document.createElement('label'); lab.textContent = p + ' ';
+      let inp;
+      if (r.enum){ inp = document.createElement('select');
+        inp.innerHTML = '<option value="">—</option>' + r.enum.map(v=>`<option>${esc(v)}</option>`).join('');
+      } else { inp = document.createElement('input'); inp.type='number'; inp.step='any';
+        inp.placeholder = `${r.min ?? ''}…${r.max ?? ''}`; }   // намеренно без min/max: можно проверить отказ
+      inp.name = p; lab.append(inp); f.append(lab);
+    }
+    if (Object.keys(rules).length){
+      const b = document.createElement('button'); b.textContent='Отправить команду'; f.append(b);
+      f.onsubmit = async e => { e.preventDefault(); const params = {};
+        for (const i of f.elements) if (i.name && i.value!=='') params[i.name] = i.type==='number' ? Number(i.value) : i.value;
+        if (!Object.keys(params).length) return;
+        const r = await fetch('/commands',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({commands:[{device_id:id,command:'set_state',params}]})});
+        const j = await r.json();
+        for (const x of j.results)
+          log(`→ <b>#${id}</b> ${esc(JSON.stringify(params))} ⇒ <span class="s-${x.status}">${x.status}</span> ${esc(x.detail||'')}`);
+      };
+    } else f.remove();
+  }
+  const vals = [];
+  for (const [k,v] of Object.entries(d.telemetry||{})) vals.push(`<div class="kv"><span>${esc(k)}</span><span class="big">${fmt(v)}</span></div>`);
+  for (const [k,v] of Object.entries(d.state||{})) vals.push(`<div class="kv"><span>${esc(k)}</span><span>${esc(fmt(v))}</span></div>`);
+  el.querySelector('.vals').innerHTML = vals.join('') || '<div class="addr">данных ещё нет</div>';
+  el.classList.toggle('alert', !!d.last_error);
+  el.querySelector('.errbox').innerHTML = d.last_error ? `<div class="err">⚠ ${esc(d.last_error.code)} ${esc(d.last_error.message||'')}</div>` : '';
+}
+
+function onEvent(ev){
+  const d = devs[ev.device_id]; if (!d) return;
+  if (ev.kind==='state') Object.assign(d.state, ev.payload);
+  else if (ev.kind==='telemetry') Object.assign(d.telemetry, ev.payload);
+  else d.last_error = ev.payload;
+  render(ev.device_id);
+  if (ev.kind!=='telemetry' || document.getElementById('showTel')?.checked)
+    log(`<span class="k-${ev.kind}">${ev.kind}</span> <b>#${ev.device_id}</b> ${esc(JSON.stringify(ev.payload))}`);
+}
+
+async function health(){
+  try{ const h = await (await fetch('/health')).json();
+    $('#adapter').textContent = 'адаптер: '+h.adapter;
+    const c = $('#conn'); c.textContent = 'транспорт: '+(h.transport_connected?'подключён':'нет связи');
+    c.className = 'pill '+(h.transport_connected?'on':'off');
+  }catch{ $('#conn').textContent='шлюз недоступен'; $('#conn').className='pill off'; }
+}
+
+(async()=>{
+  const list = await (await fetch('/devices')).json();
+  const snap = (await (await fetch('/api/demo/snapshot')).json()).devices;
+  for (const m of list){ const s = snap[m.id]||{};
+    devs[m.id] = {meta:m, state:s.state||{}, telemetry:s.telemetry||{}, last_error:s.last_error||null}; render(m.id); }
+  new EventSource('/api/demo/stream').onmessage = e => onEvent(JSON.parse(e.data));
+  setInterval(health, 2000); health();
+})();
+</script>
+</body>
+</html>

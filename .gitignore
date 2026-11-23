@@ -1,5 +1,5 @@
 myTestDir/
-
+.idea/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -227,3 +227,25 @@ __marimo__/
 
 # Виртуальное окружение
 .venv/
+
+# Local editor settings and OS files
+.idea/
+Thumbs.db
+Desktop.ini
+
+# Local environment files (keep public templates)
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Generated backend data
+/backend/data/chroma_db/
+/backend/data/home.db
+/backend/data/home.db-*
+
+# Frontend dependencies and Godot generated files
+node_modules/
+.godot/
+.import/
+export_credentials.cfg

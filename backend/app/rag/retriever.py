@@ -10,13 +10,6 @@ embeddings_model = HuggingFaceEmbeddings(
 )
 
 def get_context(query: str, k: int = 3) -> str:
-    """
-    Выполняет семантический поиск по ChromaDB и возвращает объединенный текст чанков.
-    
-    :param query: Вопрос пользователя на естественном языке
-    :param k: Количество возвращаемых релевантных фрагментов
-    :return: Форматированная строка контекста для передачи в LLM
-    """
     if not os.path.exists(DB_DIR):
         raise FileNotFoundError(f"Database directory not found at {DB_DIR}. Run indexer.py first.")
 

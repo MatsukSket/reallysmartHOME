@@ -1,0 +1,134 @@
+rooms:
+  - id: kitchen
+    name: Кухня
+  - id: living
+    name: Гостиная
+  - id: bedroom
+    name: Спальня
+  - id: bathroom
+    name: Ванная
+  - id: hallway
+    name: Прихожая
+
+devices:
+  - id: light_kitchen
+    name: Свет на кухне
+    type: light
+    room: kitchen
+    state: {power: false, brightness: 100}
+
+  - id: light_living
+    name: Свет в гостиной
+    type: light
+    room: living
+    state: {power: false, brightness: 100}
+
+  - id: light_bedroom
+    name: Свет в спальне
+    type: light
+    room: bedroom
+    state: {power: false, brightness: 100}
+
+  - id: light_hallway
+    name: Свет в прихожей
+    type: light
+    room: hallway
+    state: {power: false, brightness: 100}
+
+  - id: heater_bedroom
+    name: Обогреватель в спальне
+    type: heater
+    room: bedroom
+    state: {power: false}
+
+  - id: heater_living
+    name: Обогреватель в гостиной
+    type: heater
+    room: living
+    state: {power: false}
+
+  - id: conditioner_bedroom
+    name: Кондиционер в спальне
+    type: conditioner
+    room: bedroom
+    state: {power: false}
+
+  - id: boiler
+    name: Котёл
+    type: boiler
+    room: bathroom
+    state: {power: false, coolant_temperature: 60}
+
+  - id: humidifier_bedroom
+    name: Увлажнитель в спальне
+    type: humidifier
+    room: bedroom
+    state: {power: false}
+
+  - id: socket_kitchen
+    name: Розетка на кухне
+    type: socket
+    room: kitchen
+    state: {power: false, power_limit: 2000}
+
+  - id: vacuum
+    name: Робот-пылесос
+    type: vacuum
+    room: hallway
+    state: {mode: docked, charge: 100, place: null}
+
+  - id: leak_protection
+    name: Защита от протечек
+    type: leak_protection
+    room: bathroom
+    state: {water: open, alarm: false, place: null}
+
+  - id: sensor_temperature_bedroom
+    name: Датчик температуры в спальне
+    type: sensor_temperature
+    room: bedroom
+    state: {value: 21.0}
+
+  - id: sensor_temperature_living
+    name: Датчик температуры в гостиной
+    type: sensor_temperature
+    room: living
+    state: {value: 21.0}
+
+  - id: sensor_temperature_kitchen
+    name: Датчик температуры на кухне
+    type: sensor_temperature
+    room: kitchen
+    state: {value: 21.0}
+
+  - id: sensor_humidity_bedroom
+    name: Датчик влажности в спальне
+    type: sensor_humidity
+    room: bedroom
+    state: {value: 45.0}
+
+  - id: sensor_motion_hallway
+    name: Датчик движения в прихожей
+    type: sensor_motion
+    room: hallway
+    state: {value: false}
+
+  - id: sensor_motion_living
+    name: Датчик движения в гостиной
+    type: sensor_motion
+    room: living
+    state: {value: false}
+
+  - id: sensor_leak_bathroom
+    name: Датчик протечки в ванной
+    type: sensor_leak
+    room: bathroom
+    state: {value: false}
+
+  - id: sensor_leak_kitchen
+    name: Датчик протечки на кухне
+    type: sensor_leak
+    room: kitchen
+    state: {value: false}
+
+targets: []

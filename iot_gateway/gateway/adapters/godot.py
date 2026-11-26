@@ -81,6 +81,31 @@ class GodotAdapter(DeviceAdapter):
             log.info("Godot hello: %s", msg.get("version", "?"))
             return
 
+        if mtype == "remove":
+            node = msg.get("node")
+            if not isinstance(node, str):
+                return
+            device = self.registry.by_native(node)
+            ident = msg.get("device_id")
+            if device is not None and device.id < 1000:
+                ident = device.id
+            elif type(ident) is not int or not 1000 <= ident <= 2**32 + 999 or node != f"Virtual/{ident}":
+                return
+            await self.emit(DeviceEvent(device_id=ident, kind=EventKind.REMOVAL,
+                                        payload={}, source=self.name))
+            return
+
+        if mtype == "discover":
+            ident, node, kind, name = (msg.get(key) for key in ("device_id", "node", "device_type", "name"))
+            if (type(ident) is not int or not isinstance(node, str) or not isinstance(kind, str)
+                    or not isinstance(name, str) or not name.strip() or len(name) > 60):
+                return
+            device = self.registry.discover_godot(ident, node, kind)
+            if device is not None:
+                await self.emit(DeviceEvent(device_id=ident, kind=EventKind.DISCOVERY,
+                                            payload={"type": kind, "name": name.strip()}, source=self.name))
+            return
+
         dev = self.registry.by_native(str(msg.get("node")))
         if dev is None:
             log.warning("неизвестный узел Godot: %r", msg.get("node"))
@@ -99,7 +124,8 @@ class GodotAdapter(DeviceAdapter):
             log.warning("поле values/payload должно быть объектом: %.200r", msg)
             return
 
-        await self.emit(DeviceEvent(device_id=dev.id, kind=kind, payload=payload, source=self.name,
+        await self.emit(DeviceEvent(device_id=dev.id, kind=kind, payload=payload, source=self.name, cmd_id=msg.get('cmd_id'),
+                                    **({'event_id':str(msg['msg_id'])} if msg.get('msg_id') else {}),
                                     **({"ts": msg["ts"]} if isinstance(msg.get("ts"), (int, float)) else {})))
         if "msg_id" in msg:                                       # квитанция о получении
             await ws.send(json.dumps({"type": "received", "msg_id": msg["msg_id"]}))

@@ -21,6 +21,12 @@ class Clock(Protocol):
 class StoragePort(Protocol):
     """Доступ к состояниям дома."""
 
+    def save_room(self, room: Room) -> None:
+        ...
+
+    def delete_room(self, room_id: str) -> None:
+        ...
+
     def rooms(self) -> List[Room]:
         """Возвращает помещения дома."""
 

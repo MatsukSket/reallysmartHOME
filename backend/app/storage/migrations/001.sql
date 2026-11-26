@@ -1,0 +1,4 @@
+CREATE TABLE snapshots (name TEXT PRIMARY KEY, body TEXT NOT NULL);
+CREATE TABLE observations (seq INTEGER PRIMARY KEY, event_id TEXT UNIQUE, body TEXT NOT NULL);
+CREATE TABLE audit (seq INTEGER PRIMARY KEY, body TEXT NOT NULL);
+PRAGMA user_version=1;

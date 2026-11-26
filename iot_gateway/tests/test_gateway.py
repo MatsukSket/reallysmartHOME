@@ -2,6 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 from websockets.asyncio.client import connect
 
@@ -164,6 +165,27 @@ async def test_errors_survive_backend_outage():
         await env.wait_events(1, timeout=3)
         assert env.received[0].payload["code"] == "E04"
         await ws.close()
+
+
+async def test_invalid_critical_event_does_not_block_next_event():
+    received = asyncio.Event()
+
+    async def send(event):
+        if event.payload["code"] == "invalid":
+            request = httpx.Request("POST", "http://backend/events")
+            httpx.Response(422, request=request).raise_for_status()
+        received.set()
+
+    forwarder = BackendForwarder(send)
+    await forwarder.start()
+    try:
+        forwarder.submit(DeviceEvent(device_id=123, kind=EventKind.ERROR, source="godot",
+                                     payload={"code": "invalid"}))
+        forwarder.submit(DeviceEvent(device_id=123, kind=EventKind.ERROR, source="godot",
+                                     payload={"code": "E04"}))
+        await asyncio.wait_for(received.wait(), 1)
+    finally:
+        await forwarder.stop()
 
 
 # ---- перевод Zigbee2MQTT (чистые функции, брокер не нужен) ----

@@ -54,11 +54,20 @@ def prepare(
     if device is None:
         return reject("устройство не найдено")
 
+    if not device.connected:
+        return reject("устройство отключено от умного дома")
+
+    if hasattr(solver.model, "dispatch") and not solver.is_fresh(device):
+        # Закрытие аварийного клапана допускается и при потере его телеметрии.
+        if command.operation != "close_water":
+            return reject("нет актуального состояния устройства")
     # 2. Операция поддерживается устройством.
     spec = device.spec.operation(command.operation)
     if spec is None:
         return reject("операция не поддерживается устройством")
 
+    if hasattr(solver.model, "dispatch") and command.params.keys() - ({"value"} if spec.param_property else set()):
+        return reject("неизвестные параметры операции")
     # 3. Параметры допустимы.
     problem = spec.validate(command.params)
     if problem is not None:
@@ -68,8 +77,8 @@ def prepare(
     if device.error is not None and device.spec.error_requires_reset:
         if not spec.requires_error:
             return reject(
-                "устройство в состоянии ошибки,"
-                " требуется сброс ошибки в окне устройства"
+                f"Устройство заблокировано из-за ошибки {device.error}. "
+                "После устранения причины требуется сброс. Нажмите «Сбросить ошибку» в карточке."
             )
 
     # 5. Операция, допустимая только при ошибке.
@@ -131,12 +140,15 @@ def check_safety(
     """
     # Открывать воду можно, только если ни один датчик протечки не мокрый.
     if device.type == "leak_protection" and command.operation == "open_water":
-        for sensor in solver.storage.devices():
-            if sensor.type != "sensor_leak":
-                continue
+        sensors = [sensor for sensor in solver.storage.devices()
+                   if sensor.type == "sensor_leak" and not sensor.retired
+                   and (sensor.connected or sensor.id == "sensor_leak_bathroom")]
+        if not sensors and hasattr(solver.model, "dispatch"):
+            return reject("нет подключённого датчика протечки")
+        for sensor in sensors:
             room = solver.storage.room(sensor.room_id)
             place = room.name if room else sensor.room_id
-            if not solver.is_fresh(sensor, STALE_AFTER_S):
+            if not sensor.connected or not solver.is_fresh(sensor, STALE_AFTER_S):
                 return reject(
                     "нет актуальных сведений от датчика протечки в помещении"
                     " «{}», открывать воду небезопасно".format(place)

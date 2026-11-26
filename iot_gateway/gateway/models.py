@@ -14,6 +14,8 @@ def _uid() -> str:
 
 
 class EventKind(str, Enum):
+    REMOVAL = "removal"      # прибор удалён из симулятора
+    DISCOVERY = "discovery"  # описание нового виртуального прибора
     TELEMETRY = "telemetry"   # измерения датчиков: {"temperature": 65.2}
     STATE = "state"           # состояние исполнителя: {"power": "on", "target_temp": 60}
     ERROR = "error"           # аварии/коды ошибок: {"code": "E04", "message": "..."}
@@ -22,6 +24,7 @@ class EventKind(str, Enum):
 class DeviceEvent(BaseModel):
     """Нормализованное событие: шлюз -> бэкенд."""
     event_id: str = Field(default_factory=_uid)
+    cmd_id: str | None = None
     device_id: int                      # канонический ключ из БД бэкенда
     kind: EventKind
     ts: float = Field(default_factory=time.time)

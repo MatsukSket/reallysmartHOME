@@ -55,6 +55,7 @@ class Solver:
         self.journal = journal or Journal()
         self.locks: Dict[str, Lock] = {}
         self.pending: Dict[str, Pending] = {}
+        self.gateway_acks = {}  # cmd_id → раннее наблюдение либо True после положительной квитанции
         self.confirmed: Dict[str, CommandResult] = {}
         self.schedules: List[ScheduleMoment] = []
         self.pairs: List[SchedulePair] = []
@@ -140,7 +141,9 @@ class Solver:
         система не смогла бы открыть воду никогда.
         """
         if device.received_at is None:
-            return True
+            return not hasattr(self.model, 'dispatch')
+        if hasattr(self.model, 'dispatch') and device.last_event_time is not None:
+            return (self.clock.now()-device.last_event_time).total_seconds() <= stale_after
         return not device.is_stale(self.clock.now(), stale_after)
 
     # ------------------------------------------------------------------
@@ -204,6 +207,33 @@ class Solver:
                 # Модель могла ответить сразу: забираем готовый ответ.
                 messages = self._process_events_locked()
                 ready = self.confirmed.pop(model_id, None)
+
+            if hasattr(self.model, "dispatch"):
+                try:
+                    with self._guard:
+                        self.gateway_acks.setdefault(model_id, None)
+                    self._log(impact_id, "шлюз", "отправка в симулятор", subject=command.device_id, reason=model_id, actor=command.actor)
+                    status, detail = self.model.dispatch(command, model_id)
+                    self._log(impact_id, "шлюз", "квитанция", subject=command.device_id, status=status, reason=model_id)
+                except Exception:
+                    status, detail = "timeout", "нет квитанции шлюза"
+                if status != "confirmed":
+                    with self._guard:
+                        self.pending.pop(model_id, None)
+                        self.confirmed.pop(model_id, None)
+                        self.gateway_acks.pop(model_id,None)
+                    result = CommandResult("отклонено" if status=="rejected" else "не подтверждено",
+                                           detail or "исполнение не подтверждено", model_id)
+                    self._record_command(command, result, finished=True, publish=True)
+                    return result
+                with self._guard:
+                    observation = self.gateway_acks.get(model_id)
+                    if model_id in self.pending:
+                        self.gateway_acks[model_id] = True
+                        if observation is not None:
+                            dev = self.storage.device(command.device_id)
+                            messages.extend(events.confirm_pending(self,dev,observation.value,observation))
+                            ready = self.confirmed.pop(model_id,None)
 
         for topic, payload in messages:
             self._publish(topic, payload)
@@ -294,6 +324,7 @@ class Solver:
                     ).total_seconds()
                     if remaining <= 0:
                         self.pending.pop(model_id, None)
+                        self.gateway_acks.pop(model_id,None)
                         return CommandResult(
                             "не подтверждено",
                             "модель не подтвердила выполнение за отведённое время",
@@ -314,6 +345,7 @@ class Solver:
 
     def confirm(self, model_id: str, result: CommandResult) -> None:
         """Отмечает команду выполненной и применяет последствия."""
+        self.gateway_acks.pop(model_id,None)
         pending = self.pending.pop(model_id, None)
         self.confirmed[model_id] = result
 
@@ -329,7 +361,7 @@ class Solver:
     def _apply_consequences(self, pending: Pending) -> None:
         """Ставит блокировку и снимает ошибку после подтверждения команды."""
         device = self.storage.device(pending.device_id)
-        if device is None:
+        if device is None or device.retired:
             return
 
         if pending.source in LOCKING_SOURCES:
@@ -361,6 +393,7 @@ class Solver:
                     "не подтверждено",
                     "модель не подтвердила выполнение за отведённое время",
                 )
+                self.gateway_acks.pop(model_id,None)
                 expired.append((model_id, pending))
                 if pending.wake is not None:
                     pending.wake.set()
@@ -490,9 +523,8 @@ class Solver:
 
     def run_schedules(self) -> int:
         """Выполняет наступившие расписания."""
-        with self._guard:
-            self.expire_pending()
-            executed = automation.run_schedules(self)
+        self.expire_pending()
+        executed = automation.run_schedules(self)
         self._publish(bus.MINUTE_PASSED, {"at": self.clock.now().isoformat()})
         return executed
 
@@ -588,14 +620,18 @@ class Solver:
         for room in self.storage.rooms():
             devices = []
             for device in self.storage.devices(room.id):
+                if not device.connected:
+                    continue
                 lock = self.lock_of(device.id)
                 devices.append(
                     {
                         "id": device.id,
                         "name": device.name,
                         "type": device.type,
+                        "connected": device.connected,
                         "state": dict(device.state),
                         "error": device.error,
+                        "updated_at": device.received_at.isoformat() + "Z" if device.received_at else None,
                         "stale": device.is_stale(now, STALE_AFTER_S),
                         "lock": None
                         if lock is None
@@ -660,6 +696,9 @@ class Solver:
                     "kind": record.get("kind"),
                     "value": record.get("value"),
                     "code": record.get("code"),
+                    "event_id":record.get("event_id"),
+                    "command_id":record.get("command_id"),
+                    "received_at":record["received_at"].isoformat() if record.get("received_at") else None,
                     "time": record.get("time").isoformat()
                     if record.get("time")
                     else None,

@@ -42,26 +42,35 @@ def build_solver(config: Optional[Dict[str, str]] = None) -> Solver:
     house = load_house()
 
     storage_mode = settings.get("STORAGE", "memory")
-    if storage_mode != "memory":
+    if storage_mode not in ("memory", "sqlite"):
         raise ValueError("пока поддерживается только хранилище в памяти")
 
     home_mode = settings.get("HOME_MODEL", "stub")
     if home_mode not in ("stub", "egor"):
         raise ValueError("неизвестный источник модели дома")
     if home_mode == "egor":
-        raise ValueError("модель Егора ещё не подключена, используется заглушка")
+        from .home.gateway import simulation_house
+        house = simulation_house(house)
 
     storage = MemoryStorage(house)
     devices = storage.devices()
     clock = RealClock()
     model = StubHomeModel(devices, clock=clock)
-    return Solver(
+    if home_mode == 'egor':
+        from .home.gateway import GatewayHome
+        model = GatewayHome(storage)
+    solver = Solver(
         storage=storage,
         model=model,
         clock=clock,
         bus_=EventBus(),
         journal=Journal(),
     )
+
+    if storage_mode == 'sqlite':
+        from .storage.persistent import attach
+        attach(solver, settings)
+    return solver
 
 
 def attach_live_updates(solver: Solver, hub: ClientHub) -> None:
@@ -95,5 +104,8 @@ def make_auth(solver: Solver, config: Optional[Dict[str, str]] = None) -> "AuthS
     auth = AuthService(solver.clock)
     username = settings.get("ADMIN_NAME", "admin")
     password = settings.get("ADMIN_PASSWORD", "admin")
+    if hasattr(solver, 'database'):
+        from .storage.persistent import attach_auth
+        attach_auth(auth, solver.database)
     auth.ensure_admin(username, password)
     return auth

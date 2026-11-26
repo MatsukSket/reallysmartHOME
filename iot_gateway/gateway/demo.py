@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
-from .models import DeviceEvent
+from .models import DeviceEvent, EventKind
 
 STATIC = Path(__file__).parent / "static"
 
@@ -18,16 +19,23 @@ STATIC = Path(__file__).parent / "static"
 class DemoHub:
     def __init__(self) -> None:
         self.devices: dict[int, dict] = {}
+        self.retired: set[int] = set()
         self.subscribers: set[asyncio.Queue] = set()
 
     def apply(self, ev: DeviceEvent) -> None:
-        d = self.devices.setdefault(ev.device_id, {"state": {}, "telemetry": {}, "last_error": None})
-        if ev.kind.value == "state":
-            d["state"].update(ev.payload)
-        elif ev.kind.value == "telemetry":
-            d["telemetry"].update(ev.payload)
+        if ev.kind is EventKind.REMOVAL:
+            self.retired.add(ev.device_id)
+            self.devices.pop(ev.device_id, None)
+        elif ev.device_id in self.retired:
+            return
         else:
-            d["last_error"] = ev.payload
+            d = self.devices.setdefault(ev.device_id, {"state": {}, "telemetry": {}, "last_error": None})
+            if ev.kind is EventKind.STATE:
+                d["state"].update(ev.payload)
+            elif ev.kind is EventKind.TELEMETRY:
+                d["telemetry"].update(ev.payload)
+            elif ev.kind is EventKind.ERROR:
+                d["last_error"] = ev.payload
         msg = json.dumps(ev.model_dump(mode="json"))
         for q in list(self.subscribers):
             q.put_nowait(msg)
@@ -45,7 +53,7 @@ def install(app: FastAPI) -> None:
 
     @r.get("/api/demo/snapshot")
     async def snapshot():
-        return {"devices": hub.devices}
+        return {"devices": hub.devices, "retired": sorted(hub.retired), "read_only": bool(os.getenv("GATEWAY_TOKEN"))}
 
     @r.get("/api/demo/stream")
     async def stream(request: Request):

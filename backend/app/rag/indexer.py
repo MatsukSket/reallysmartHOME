@@ -1,55 +1,39 @@
+"""Версионированный локальный индекс. Предыдущие версии сохраняются."""
 import os
-import shutil
-from langchain_community.document_loaders import DirectoryLoader, TextLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
+import re
+import uuid
+from pathlib import Path
+from functools import lru_cache
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-MANUALS_DIR = os.path.join(BASE_DIR, "data", "manuals")
-DB_DIR = os.path.join(BASE_DIR, "data", "chroma_db")
+MANUALS = Path(__file__).resolve().parents[2]/"data"/"manuals"
+ROOT = Path(os.getenv("RAG_ROOT", Path(__file__).resolve().parents[3]/"runtime"/"rag"))
+MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+def passages():
+    for path in sorted(MANUALS.glob("*.md")):
+        for i,part in enumerate(re.split(r"\n\s*\n",path.read_text(encoding="utf8"))):
+            code = re.search(r"\bE\d{2}\b",part)
+            yield {"text":part.strip(),"source":path.name,"chunk_id":f"{path.stem}-{i}",
+                   "model":"Baxi Eco 4s" if path.stem=="boiler_baxi" else "",
+                   "code":code.group() if code else ""}
+
+@lru_cache(maxsize=1)
+def encoder():
+    from sentence_transformers import SentenceTransformer
+    return SentenceTransformer(MODEL,local_files_only=os.getenv("RAG_DOWNLOAD")!="1")
 
 def create_index():
-    print(f"Starting indexing process from: {MANUALS_DIR}")
-    
-    loader = DirectoryLoader(
-        MANUALS_DIR, 
-        glob="**/*.md", 
-        loader_cls=TextLoader,
-        loader_kwargs={'encoding': 'utf-8'}
-    )
-    documents = loader.load()
-    
-    if not documents:
-        print("Error: No .md files found in the specified directory.")
-        return
+    import chromadb
+    chunks=list(passages())
+    if not chunks: raise ValueError("Нет руководств")
+    vectors=encoder().encode([c["text"] for c in chunks],normalize_embeddings=True)
+    version=uuid.uuid4().hex
+    collection=chromadb.PersistentClient(path=str(ROOT/version)).create_collection("manuals")
+    collection.add(ids=[c["chunk_id"] for c in chunks],documents=[c["text"] for c in chunks],
+        metadatas=[{k:v for k,v in c.items() if k!="text"} for c in chunks],embeddings=vectors.tolist())
+    pointer=ROOT/(version+".txt")
+    pointer.write_text(version)
+    pointer.replace(ROOT/"CURRENT")
+    return version
 
-    print(f"Loaded {len(documents)} document(s).")
-
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=100,
-        separators=["\n\n", "\n", ".", " "]
-    )
-    chunks = text_splitter.split_documents(documents)
-    print(f"Split documents into {len(chunks)} chunk(s).")
-
-    print("Loading embedding model...")
-    embeddings_model = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-    )
-
-    if os.path.exists(DB_DIR):
-        print(f"Removing existing database at: {DB_DIR}")
-        shutil.rmtree(DB_DIR)
-
-    print(f"Saving vector database to: {DB_DIR}")
-    Chroma.from_documents(
-        documents=chunks,
-        embedding=embeddings_model,
-        persist_directory=DB_DIR
-    )
-    print("Indexing completed successfully.")
-
-if __name__ == "__main__":
-    create_index()
+if __name__=="__main__": print(create_index())

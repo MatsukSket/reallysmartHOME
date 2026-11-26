@@ -400,7 +400,8 @@ def create_app(
     @app.get("/api/home")
     def home(session: Any = Depends(current_session)) -> Dict[str, Any]:
         """Сводка о доме: помещения, устройства, цели, расписания, история."""
-        return get_solver().summary()
+        with get_solver()._guard:
+            return get_solver().summary()
 
     # ------------------------------------------------------------------
     # Управление.
@@ -428,6 +429,8 @@ def create_app(
         Пользовательский пропуск не требуется: это внешний компонент.
         В будущем канал защищается общим секретом, согласованным с моделью.
         """
+        if hasattr(get_solver().model, 'dispatch'):
+            raise HTTPException(403, 'Используйте служебный маршрут шлюза')
         from .domain import Event
 
         accepted = get_solver().accept_event(
@@ -563,7 +566,7 @@ def create_app(
         return {"events": get_hub().recent(limit)}
 
     @app.get("/api/live")
-    async def live(token: Optional[str] = Query(default=None)) -> StreamingResponse:
+    async def live(token: Optional[str] = Query(default=None), authorization: Optional[str] = Header(default=None)) -> StreamingResponse:
         """Поток живых обновлений.
 
         Клиент держит соединение открытым и получает события по мере
@@ -571,7 +574,8 @@ def create_app(
         подключение браузера не умеет передавать заголовки.
         """
         try:
-            get_auth().authenticate(token)
+            stream_token=bearer(authorization,token)
+            get_auth().authenticate(stream_token)
         except AuthError as error:
             raise HTTPException(status_code=401, detail=str(error))
 
@@ -590,6 +594,10 @@ def create_app(
                 for message in hub_ref.recent(10):
                     yield "data: " + json.dumps(message, ensure_ascii=False) + "\n\n"
                 while True:
+                    try:
+                        get_auth().authenticate(stream_token)
+                    except AuthError:
+                        return
                     try:
                         message = await asyncio.wait_for(queue.get(), timeout=15.0)
                     except asyncio.TimeoutError:
@@ -626,6 +634,8 @@ def create_app(
         schedules = solver.run_schedules()
         return {"events": accepted, "schedules": schedules}
 
+    from .integration import install
+    install(app,current_session)
     return app
 
 

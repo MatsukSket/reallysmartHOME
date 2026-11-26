@@ -315,7 +315,7 @@ class AuthService:
                 expires_at=now + timedelta(seconds=REFRESH_TTL_S),
             )
             self._devices_by_id[session.id] = session
-            self._devices_by_refresh[session.refresh_token] = session.id
+            self._devices_by_refresh[hash_code(session.refresh_token)] = session.id
             return self._issue_access(session), session
 
     def refresh(self, refresh_token: str) -> Tuple[AccessGrant, DeviceSession]:
@@ -472,7 +472,7 @@ class AuthService:
 
     def _device_by_refresh(self, refresh_token: str) -> DeviceSession:
         """Находит устройство по долгому пропуску."""
-        session_id = self._devices_by_refresh.get(refresh_token)
+        session_id = self._devices_by_refresh.get(hash_code(refresh_token))
         if session_id is None:
             raise AuthError("долгий пропуск не найден, требуется повторный вход")
         session = self._devices_by_id.get(session_id)
@@ -485,7 +485,8 @@ class AuthService:
         session = self._devices_by_id.pop(session_id, None)
         if session is None:
             return False
-        self._devices_by_refresh.pop(session.refresh_token, None)
+        for digest, ident in list(self._devices_by_refresh.items()):
+            if ident == session_id: self._devices_by_refresh.pop(digest)
         for token, grant in list(self._access.items()):
             if grant.session_id == session_id:
                 self._access.pop(token, None)

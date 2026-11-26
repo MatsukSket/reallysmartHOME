@@ -225,11 +225,7 @@ __marimo__/
 # macOS
 .DS_Store
 
-# Виртуальное окружение
-.venv/
-
 # Local editor settings and OS files
-.idea/
 Thumbs.db
 Desktop.ini
 
@@ -249,3 +245,5 @@ node_modules/
 .godot/
 .import/
 export_credentials.cfg
+
+/runtime/

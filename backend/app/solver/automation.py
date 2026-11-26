@@ -68,7 +68,7 @@ def lead_minutes() -> int:
 def on_reading(solver: "Solver", sensor: Device) -> None:
     """Запускает поддержание значения после показания датчика."""
     parameter = measured_parameter(sensor)
-    if parameter is None:
+    if parameter is None or not sensor.connected:
         return
     if sensor.is_stale(solver.clock.now(), STALE_AFTER_S):
         return
@@ -107,7 +107,7 @@ def maintain(
             continue
 
         device = solver.storage.device(target.device_id)
-        if device is None or device.spec.regulates != parameter:
+        if device is None or not device.connected or device.spec.regulates != parameter:
             continue
 
         operation = choose_operation(
@@ -166,8 +166,8 @@ def set_target(
 
     if device_id is not None:
         device = solver.storage.device(device_id)
-        if device is None:
-            raise ScheduleError("устройство не найдено")
+        if device is None or not device.connected:
+            raise ScheduleError("подключённое устройство не найдено")
         if device.spec.regulates != parameter:
             raise ScheduleError(
                 "устройство не регулирует параметр «{}»".format(parameter)
@@ -228,7 +228,7 @@ def find_target(solver: "Solver", room_id: str, parameter: str) -> Optional[Targ
 def pick_regulator(solver: "Solver", room_id: str, parameter: str) -> Optional[Device]:
     """Выбирает устройство, регулирующее параметр в помещении."""
     for device in solver.storage.devices(room_id):
-        if device.spec.regulates == parameter:
+        if device.connected and device.spec.regulates == parameter:
             return device
     return None
 
@@ -256,7 +256,7 @@ def create_command_schedule(
 ) -> ScheduleMoment:
     """Создаёт расписание команды устройству."""
     device = solver.storage.device(device_id)
-    if device is None:
+    if device is None or not device.connected:
         raise ScheduleError("устройство не найдено")
 
     spec = device.spec.operation(operation)
@@ -486,21 +486,18 @@ def next_due(moment: ScheduleMoment, now: datetime) -> datetime:
 def run_schedules(solver: "Solver") -> int:
     """Выполняет наступившие расписания и возвращает их число."""
     now = solver.clock.now()
-    executed = 0
-
-    for moment in list(solver.schedules):
-        if moment.next_due is None:
-            moment.next_due = next_due(moment, now)
-        if moment.next_due > now:
-            continue
-
-        if (now - moment.next_due).total_seconds() <= SCHEDULE_TOLERANCE_S:
-            execute_moment(solver, moment)
-            executed += 1
-
-        moment.next_due = next_due(moment, now + timedelta(seconds=1))
-
-    return executed
+    due = []
+    with solver._guard:
+        for moment in solver.schedules:
+            if moment.next_due is None:
+                moment.next_due = next_due(moment, now)
+            if moment.next_due <= now:
+                if (now - moment.next_due).total_seconds() <= SCHEDULE_TOLERANCE_S:
+                    due.append(moment)
+                moment.next_due = next_due(moment, now + timedelta(seconds=1))
+    for moment in due:
+        execute_moment(solver, moment)
+    return len(due)
 
 
 def execute_moment(solver: "Solver", moment: ScheduleMoment) -> Any:

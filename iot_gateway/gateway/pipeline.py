@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import os
 from collections import deque
 from typing import Awaitable, Callable
 
@@ -20,7 +21,7 @@ class HttpSender:
     """Отправка события в FastAPI-бэкенд. Любой не-2xx считается неудачей."""
     def __init__(self, url: str, timeout: float = 3.0):
         self._url = url
-        self._client = httpx.AsyncClient(timeout=timeout)
+        self._client = httpx.AsyncClient(timeout=timeout, headers={'X-Gateway-Token':os.getenv('GATEWAY_TOKEN','')})
 
     async def __call__(self, event: DeviceEvent) -> None:
         r = await self._client.post(self._url, json=event.model_dump(mode="json"))
@@ -52,7 +53,7 @@ class BackendForwarder:
             await self._task
 
     def submit(self, ev: DeviceEvent) -> None:
-        (self._critical if ev.kind is EventKind.ERROR else self._regular).append(ev)
+        (self._critical if ev.kind in (EventKind.ERROR, EventKind.DISCOVERY, EventKind.REMOVAL) or ev.cmd_id or 'wet' in ev.payload else self._regular).append(ev)
         self._wake.set()
 
     def _next(self) -> tuple[DeviceEvent, bool] | None:
@@ -80,6 +81,12 @@ class BackendForwarder:
                     self._critical.popleft()
             except Exception as exc:                       # noqa: BLE001
                 log.warning("доставка %s/%s не удалась: %s", ev.kind.value, ev.device_id, exc)
+                if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (400, 409, 422):
+                    # Повтор отклонённого сообщения блокировал бы всю очередь.
+                    if critical:
+                        self._critical.popleft()
+                    delay = 0.2
+                    continue
                 if not critical:
                     continue                               # телеметрию не повторяем
                 if not self._running:
@@ -98,13 +105,21 @@ class EventPipeline:
         self._last: dict[tuple[int, EventKind], tuple[dict, float]] = {}
 
     async def __call__(self, ev: DeviceEvent) -> None:
+        if ev.kind is EventKind.REMOVAL:
+            self._fwd.submit(ev)
+            return
         dev = self._reg.get(ev.device_id)
         if dev is None:
             log.warning("событие от незарегистрированного устройства %s отброшено", ev.device_id)
             return
 
-        if ev.kind is EventKind.ERROR:                     # аварии никогда не фильтруем
-            log.info("ERROR device=%s %s", ev.device_id, ev.payload)
+        if ev.kind is EventKind.ERROR and ev.payload.get("code") == "WATER_LEAK":
+            # Ошибка уже означает «мокро» для бэкенда. Следующее состояние
+            # нужно передать даже при совпадении с состоянием до аварии.
+            self._last.pop((ev.device_id, EventKind.STATE), None)
+
+        if ev.kind in (EventKind.ERROR, EventKind.DISCOVERY) or ev.cmd_id:                     # аварии никогда не фильтруем
+            log.info("%s device=%s %s", ev.kind.value, ev.device_id, ev.payload)
             self._fwd.submit(ev)
             return
 
@@ -130,6 +145,9 @@ class EventPipeline:
         if not changed and now - ts < self._heartbeat:
             return None                                    # ничего нового
         self._last[key] = ({**prev, **ev.payload}, now)
+        # Заряд относится к тому же наблюдению, что и признак протечки.
+        if "wet" in ev.payload and "battery" in ev.payload:
+            return ev.payload
         return changed or ev.payload                       # heartbeat: шлём как есть
 
     def _same(self, a, b) -> bool:

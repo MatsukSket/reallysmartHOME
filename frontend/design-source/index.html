@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Умный дом</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="bg"></div>
+
+<svg width="0" height="0" style="position:absolute"><defs>
+<symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></symbol>
+<symbol id="i-map" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 12h18M12 3v9"/></symbol>
+<symbol id="i-dev" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="14" width="8" height="6" rx="2"/><rect x="14" y="14" width="7" height="6" rx="2"/></symbol>
+<symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 12a8 8 0 01-11.5 7.2L4 20l1-4.6A8 8 0 1121 12z"/></symbol>
+<symbol id="i-log" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
+<symbol id="i-ac" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="7" rx="2"/><path d="M7 16c0 2-1 3-1 3M12 16c0 2-1 3-1 3M17 16c0 2-1 3-1 3"/></symbol>
+<symbol id="i-boiler" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="3"/><circle cx="12" cy="9" r="2"/><path d="M9 15h6"/></symbol>
+<symbol id="i-lamp" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 00-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0012 3z"/></symbol>
+<symbol id="i-humid" viewBox="0 0 24 24"><path d="M12 3s6 6.5 6 11a6 6 0 01-12 0c0-4.5 6-11 6-11z"/></symbol>
+<symbol id="i-vacuum" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v3"/></symbol>
+<symbol id="i-sensor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M6.3 6.3a8 8 0 000 11.4M17.7 6.3a8 8 0 010 11.4M3.5 3.5a12 12 0 000 17M20.5 3.5a12 12 0 010 17"/></symbol>
+<symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v4a6 6 0 01-12 0V8zM12 18v3"/></symbol>
+<symbol id="i-cam" viewBox="0 0 24 24"><rect x="3" y="7" width="13" height="10" rx="2"/><path d="M16 11l5-3v8l-5-3"/></symbol>
+<symbol id="i-other" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M9 12h6M12 9v6"/></symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="M3 11l18-8-8 18-2-7-8-3z"/></symbol>
+<symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5a2 2 0 012-2h13v16H6a2 2 0 00-2 2V5zM4 19a2 2 0 012-2h13"/></symbol>
+<symbol id="i-fan" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M12 10c0-4 1-6 3-6s2 3-3 6zM14 12c4 0 6 1 6 3s-3 2-6-3zM12 14c0 4-1 6-3 6s-2-3 3-6zM10 12c-4 0-6-1-6-3s3-2 6 3z"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5l12 7.5-12 7.5z"/></symbol>
+<symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+<symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+</defs></svg>
+
+<div class="app">
+
+<!-- 1. ОБЗОР -->
+<section id="s-home" class="screen px-5 pt-10">
+  <div class="flex items-start justify-between gap-3">
+    <div>
+      <p id="date" class="mute text-sm font-medium"></p>
+      <h1 id="greet" class="text-4xl font-semibold tracking-tight mt-1"></h1>
+      <p class="mute text-sm mt-1">Дома всё спокойно</p>
+    </div>
+    <button id="prof-btn" data-modal="m-prof" class="glass hov flex items-center gap-2 pl-2 pr-3.5 py-2 shrink-0" style="border-radius:999px" aria-label="Профиль и настройки">
+      <span class="ibox" style="width:32px;height:32px;border-radius:50%;background:var(--accsoft);color:var(--acc)"><svg class="ico" style="width:18px;height:18px"><use href="#i-user"/></svg></span>
+      <span class="text-left leading-tight"><span class="block text-xs font-semibold">Профиль</span><span id="prof-role" class="block text-[11px] mute">Пользователь</span></span>
+    </button>
+  </div>
+
+  <div class="glass mt-7 p-5 grid grid-cols-3 gap-3">
+    <div>
+      <p class="mute text-xs font-medium">Температура</p>
+      <p class="num text-4xl mt-1">22°</p>
+    </div>
+    <div class="pl-3" style="border-left:1px solid var(--line)">
+      <p class="mute text-xs font-medium">Влажность</p>
+      <p class="num text-4xl mt-1">45%</p>
+    </div>
+    <div class="pl-3" style="border-left:1px solid var(--line)">
+      <p class="mute text-xs font-medium">Работают</p>
+      <p class="num text-4xl mt-1"><span id="cnt-on">3</span><span class="mute text-base font-medium"> из <span id="cnt-all">5</span></span></p>
+    </div>
+  </div>
+
+  <h2 class="text-xl font-semibold tracking-tight mt-8 mb-3">Комнаты</h2>
+  <div id="home-rooms" class="grid grid-cols-2 gap-3"></div>
+</section>
+
+<!-- 2. УСТРОЙСТВА (план дома) -->
+<section id="s-dev" class="screen px-5 pt-10">
+  <h1 class="text-4xl font-semibold tracking-tight">Устройства</h1>
+  <p class="mute text-sm mt-1">План дома · выберите комнату</p>
+  <div class="glass mt-7 p-4"><div id="plan" class="grid grid-cols-2 gap-2"></div></div>
+  <button data-modal="m-room" class="admin-only btn btn-soft mt-5 w-full rounded-2xl py-4 flex items-center justify-center gap-2">
+    <svg class="ico"><use href="#i-plus"/></svg>Добавить комнату
+  </button>
+</section>
+
+<!-- 3. КОМНАТА -->
+<section id="s-room" class="screen px-5 pt-10">
+  <button id="room-back" class="btn btn-soft rounded-full pl-2 pr-4 py-1.5 text-sm flex items-center gap-1"><svg class="ico" style="width:18px;height:18px"><use href="#i-back"/></svg>План</button>
+  <div class="flex items-end justify-between mt-4">
+    <div><h1 id="room-title" class="text-4xl font-semibold tracking-tight"></h1><p id="room-sub" class="mute text-sm mt-1"></p></div>
+    <button id="room-add" class="admin-only btn btn-acc rounded-2xl px-4 py-2.5 text-sm flex items-center gap-1.5"><svg class="ico" style="width:18px;height:18px"><use href="#i-plus"/></svg>Добавить</button>
+  </div>
+  <div id="dev-list" class="mt-7 space-y-3"></div>
+</section>
+
+<!-- 4. ПОМОЩНИК RAG -->
+<section id="s-chat" class="screen px-5 pt-10">
+  <h1 class="text-4xl font-semibold tracking-tight">Помощник</h1>
+  <p class="mute text-sm mt-1">Отвечает по инструкциям к вашим приборам</p>
+  <div class="mt-7 space-y-4">
+    <div class="flex justify-end">
+      <div class="max-w-[85%] rounded-2xl rounded-br-md px-4 py-3 text-sm font-medium" style="background:var(--acc);color:#fff">В гостиной душно. Что можно сделать?</div>
+    </div>
+    <div class="flex">
+      <div class="glass max-w-[92%] !rounded-bl-md px-4 py-4 text-sm leading-relaxed">
+        <p>Рекомендую включить вентиляцию на кондиционере и оставить температуру около 22°C. Если воздух останется тяжёлым, проветрите комнату 10–15 минут.</p>
+        <div class="mt-4 rounded-xl p-3" style="background:var(--soft);border:1px solid var(--line)">
+          <p class="text-xs font-semibold mute mb-2">Источники</p>
+          <div class="flex items-center gap-2">
+            <svg class="ico shrink-0" style="color:var(--acc)"><use href="#i-book"/></svg>
+            <div><p class="font-semibold text-xs">Инструкция кондиционера</p><p class="mute text-xs">Раздел 4, режим вентиляции</p></div>
+          </div>
+        </div>
+        <div class="mt-2 rounded-xl p-3 flex items-center gap-3" style="background:var(--oksoft);border:1px solid var(--line)">
+          <svg class="ico shrink-0" style="color:var(--ok)"><use href="#i-fan"/></svg>
+          <div><p class="text-xs font-semibold" style="color:var(--ok)">Результат команды</p><p class="text-xs font-semibold">Вентиляция включена</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="mt-6 glass p-2 flex items-center gap-2">
+    <input type="text" placeholder="Напишите вопрос" class="flex-1 bg-transparent outline-none px-3 py-2 text-sm">
+    <button class="btn btn-acc w-10 h-10 rounded-xl flex items-center justify-center" aria-label="Отправить"><svg class="ico"><use href="#i-send"/></svg></button>
+  </div>
+</section>
+
+<!-- 5. СОБЫТИЯ -->
+<section id="s-log" class="screen px-5 pt-10">
+  <h1 class="text-4xl font-semibold tracking-tight">События</h1>
+  <div class="mt-7 space-y-3">
+    <div class="glass p-4 flex items-center gap-4"><span class="ibox" style="color:var(--ok)"><svg class="ico"><use href="#i-fan"/></svg></span><span class="flex-1"><span class="block font-semibold text-sm">Вентиляция включена</span><span class="block mute text-xs mt-0.5">По команде помощника</span></span><span class="mute text-xs font-medium">14:35</span></div>
+    <div class="glass p-4 flex items-center gap-4"><span class="ibox" style="color:var(--acc)"><svg class="ico"><use href="#i-ac"/></svg></span><span class="flex-1"><span class="block font-semibold text-sm">Кондиционер включен</span><span class="block mute text-xs mt-0.5">Гостиная, 22°C</span></span><span class="mute text-xs font-medium">12:10</span></div>
+    <div class="glass p-4 flex items-center gap-4"><span class="ibox" style="color:var(--acc)"><svg class="ico"><use href="#i-humid"/></svg></span><span class="flex-1"><span class="block font-semibold text-sm">Увлажнитель: влажность 45%</span><span class="block mute text-xs mt-0.5">Спальня, цель 50%</span></span><span class="mute text-xs font-medium">11:20</span></div>
+    <div class="glass p-4 flex items-center gap-4"><span class="ibox" style="color:var(--acc)"><svg class="ico"><use href="#i-vacuum"/></svg></span><span class="flex-1"><span class="block font-semibold text-sm">Робот-пылесос завершил уборку</span><span class="block mute text-xs mt-0.5">Гостиная, 42 минуты</span></span><span class="mute text-xs font-medium">09:42</span></div>
+    <div class="glass p-4 flex items-center gap-4"><span class="ibox mute"><svg class="ico"><use href="#i-lamp"/></svg></span><span class="flex-1"><span class="block font-semibold text-sm">Лампа выключена</span><span class="block mute text-xs mt-0.5">Спальня</span></span><span class="mute text-xs font-medium">08:05</span></div>
+  </div>
+</section>
+
+</div>
+
+<!-- TAB BAR -->
+<nav class="tabbar">
+  <div class="glass max-w-[406px] mx-auto grid grid-cols-4" style="border-radius:26px">
+    <button data-tab="s-home" class="tab-btn active flex flex-col items-center gap-1 py-3 text-[11px] font-medium"><svg class="ico"><use href="#i-home"/></svg>Обзор</button>
+    <button data-tab="s-dev" class="tab-btn flex flex-col items-center gap-1 py-3 text-[11px] font-medium"><svg class="ico"><use href="#i-map"/></svg>Устройства</button>
+    <button data-tab="s-chat" class="tab-btn flex flex-col items-center gap-1 py-3 text-[11px] font-medium"><svg class="ico"><use href="#i-chat"/></svg>Помощник</button>
+    <button data-tab="s-log" class="tab-btn flex flex-col items-center gap-1 py-3 text-[11px] font-medium"><svg class="ico"><use href="#i-log"/></svg>События</button>
+  </div>
+</nav>
+
+<!-- КАРТОЧКА УСТРОЙСТВА -->
+<div id="m-dev" class="modal items-end justify-center">
+  <div class="sheet w-full max-w-[430px] rounded-t-[28px] p-6">
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <span id="d-icon" class="ibox"></span>
+        <div><p id="d-name" class="text-xl font-semibold tracking-tight leading-tight"></p><p class="text-xs font-semibold"><span id="d-status"></span> <span class="mute font-medium">· <span id="d-room"></span></span></p></div>
+      </div>
+      <button data-close class="btn btn-soft w-9 h-9 rounded-full flex items-center justify-center" aria-label="Закрыть"><svg class="ico"><use href="#i-x"/></svg></button>
+    </div>
+    <div id="d-ctl"></div>
+    <button id="d-toggle" class="btn w-full mt-6 rounded-2xl py-3.5"></button>
+  </div>
+</div>
+
+<!-- ДОБАВИТЬ УСТРОЙСТВО -->
+<div id="m-add" class="modal items-end justify-center">
+  <div class="sheet w-full max-w-[430px] rounded-t-[28px] p-6">
+    <div class="flex items-center justify-between">
+      <p class="text-xl font-semibold tracking-tight">Новое устройство</p>
+      <button data-close class="btn btn-soft w-9 h-9 rounded-full flex items-center justify-center" aria-label="Закрыть"><svg class="ico"><use href="#i-x"/></svg></button>
+    </div>
+    <p class="mute text-sm font-semibold mt-5 mb-2">Тип</p>
+    <div class="grid grid-cols-3 gap-2">
+      <button class="type-btn sel" data-type="ac"><svg class="ico"><use href="#i-ac"/></svg>Кондиционер</button>
+      <button class="type-btn" data-type="vacuum"><svg class="ico"><use href="#i-vacuum"/></svg>Робот-пылесос</button>
+      <button class="type-btn" data-type="humid"><svg class="ico"><use href="#i-humid"/></svg>Увлажнитель</button>
+      <button class="type-btn" data-type="lamp"><svg class="ico"><use href="#i-lamp"/></svg>Лампа</button>
+      <button class="type-btn" data-type="boiler"><svg class="ico"><use href="#i-boiler"/></svg>Котел</button>
+      <button class="type-btn" data-type="sensor"><svg class="ico"><use href="#i-sensor"/></svg>Датчик</button>
+      <button class="type-btn" data-type="plug"><svg class="ico"><use href="#i-plug"/></svg>Розетка</button>
+      <button class="type-btn" data-type="cam"><svg class="ico"><use href="#i-cam"/></svg>Камера</button>
+      <button class="type-btn" data-type="other"><svg class="ico"><use href="#i-other"/></svg>Другое</button>
+    </div>
+    <p class="mute text-sm font-semibold mt-5 mb-2">Название</p>
+    <input id="add-name" type="text" placeholder="Например, Лампа у дивана" class="field">
+    <p class="mute text-sm font-semibold mt-4 mb-2">Комната</p>
+    <select id="add-room" class="field"></select>
+    <button id="add-submit" class="btn btn-acc w-full mt-6 rounded-2xl py-3.5">Добавить устройство</button>
+  </div>
+</div>
+
+<!-- ПРОФИЛЬ -->
+<div id="m-prof" class="modal items-end justify-center">
+  <div class="sheet w-full max-w-[430px] rounded-t-[28px] p-6">
+    <div class="flex items-center justify-between">
+      <p class="text-xl font-semibold tracking-tight">Профиль</p>
+      <button data-close class="btn btn-soft w-9 h-9 rounded-full flex items-center justify-center" aria-label="Закрыть"><svg class="ico"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="flex items-center gap-3 mt-5">
+      <span class="ibox" style="background:var(--accsoft);color:var(--acc)"><svg class="ico"><use href="#i-user"/></svg></span>
+      <div><p class="mute text-xs font-semibold">Текущий статус</p><p id="prof-status" class="font-semibold"></p></div>
+    </div>
+
+    <div id="prof-login">
+      <p class="mute text-sm font-semibold mt-6 mb-2">Режим администратора</p>
+      <input id="adm-pass" type="password" placeholder="Пароль" class="field">
+      <p id="adm-err" class="text-xs mt-2" style="color:#c0566e;display:none">Неверный пароль</p>
+      <button id="adm-login" class="btn btn-acc w-full mt-4 rounded-2xl py-3.5">Войти как администратор</button>
+    </div>
+
+    <div id="prof-admin" style="display:none">
+      <div class="flex items-center justify-between mt-6 mb-2">
+        <p class="mute text-sm font-semibold">Пользователи системы</p>
+        <button id="user-add" class="btn btn-soft rounded-xl px-3 py-1.5 text-xs flex items-center gap-1"><svg class="ico" style="width:14px;height:14px"><use href="#i-plus"/></svg>Добавить</button>
+      </div>
+      <div id="user-list" class="space-y-2"></div>
+      <p id="user-note" class="mute text-xs mt-3" style="display:none">Способ добавления пользователей будет определён позже.</p>
+      <button id="adm-logout" class="btn btn-soft w-full mt-6 rounded-2xl py-3.5">Выйти из режима администратора</button>
+    </div>
+  </div>
+</div>
+
+<!-- ДОБАВИТЬ КОМНАТУ -->
+<div id="m-room" class="modal items-center justify-center px-6">
+  <div class="sheet w-full max-w-[380px] rounded-[24px] p-6">
+    <div class="flex items-center justify-between">
+      <p class="text-xl font-semibold tracking-tight">Новая комната</p>
+      <button data-close class="btn btn-soft w-9 h-9 rounded-full flex items-center justify-center" aria-label="Закрыть"><svg class="ico"><use href="#i-x"/></svg></button>
+    </div>
+    <p class="mute text-sm font-semibold mt-5 mb-2">Название</p>
+    <input id="room-name" type="text" placeholder="Например, Кабинет" class="field">
+    <button id="room-submit" class="btn btn-acc w-full mt-6 rounded-2xl py-3.5">Добавить комнату</button>
+  </div>
+</div>
+
+<script src="js/app.js"></script>
+</body>
+</html>

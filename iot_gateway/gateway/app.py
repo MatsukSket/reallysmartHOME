@@ -10,7 +10,8 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
+import secrets
 from pydantic import BaseModel
 
 from .adapters import create_adapter
@@ -49,7 +50,10 @@ def create_app(settings: dict | None = None, sender=None) -> FastAPI:
     async def lifespan(app: FastAPI):
         registry = Registry.load(cfg["registry_path"], cfg["adapter"])
         http_sender = sender or HttpSender(cfg["backend_events_url"])
-        forwarder = BackendForwarder(http_sender)
+        async def deliver(ev):
+            await http_sender(ev)
+            if hasattr(app.state,'demo'): app.state.demo.apply(ev)
+        forwarder = BackendForwarder(deliver)
         pipeline = EventPipeline(registry, forwarder)
         adapter = create_adapter(cfg["adapter"], registry, pipeline, cfg)
         await forwarder.start()
@@ -74,22 +78,41 @@ def create_app(settings: dict | None = None, sender=None) -> FastAPI:
         return [{"id": d.id, "type": d.type, "address": reg.native_of(d), "commands": list(d.commands),
                  "rules": d.commands} for d in reg.all()]
 
+    dispatched = {}
+
     @app.post("/commands")
-    async def commands(batch: CommandBatch) -> dict:
+    async def commands(batch: CommandBatch, x_gateway_token: str = Header(default='')) -> dict:
         """Принимает список команд, возвращает по каждой статус с квитанцией (confirmed/rejected/timeout/...)."""
+        token=os.getenv('GATEWAY_TOKEN')
+        if token and not secrets.compare_digest(token,x_gateway_token): raise HTTPException(403)
         if not batch.commands:
             raise HTTPException(422, "пустой список команд")
         reg: Registry = app.state.registry
         adapter = app.state.adapter
 
-        async def run(cmd: Command) -> CommandResult:
+        # Проверьте конфликты всего пакета до выполнения первой команды.
+        originals = {}
+        for cmd in batch.commands:
+            prior = dispatched[cmd.cmd_id][0] if cmd.cmd_id in dispatched else originals.get(cmd.cmd_id)
+            if prior is not None and prior != cmd:
+                raise HTTPException(409, "Конфликт cmd_id")
+            originals[cmd.cmd_id] = cmd
+
+        async def rejected(cmd: Command, reason: str) -> CommandResult:
+            return CommandResult(cmd_id=cmd.cmd_id, device_id=cmd.device_id,
+                                 status=CommandStatus.REJECTED, detail=reason)
+
+        replies = []
+        for cmd in batch.commands:
             err = reg.validate_command(cmd)
             if err:
-                return CommandResult(cmd_id=cmd.cmd_id, device_id=cmd.device_id,
-                                     status=CommandStatus.REJECTED, detail=err)
-            return await adapter.execute(cmd)
+                replies.append(rejected(cmd, err))
+                continue
+            if cmd.cmd_id not in dispatched:
+                dispatched[cmd.cmd_id] = (cmd, asyncio.create_task(adapter.execute(cmd)))
+            replies.append(asyncio.shield(dispatched[cmd.cmd_id][1]))
 
-        results = await asyncio.gather(*(run(c) for c in batch.commands))
+        results = await asyncio.gather(*replies)
         return {"results": [r.model_dump(mode="json") for r in results]}
 
     if os.getenv("DEMO_UI") == "1" or cfg.get("demo_ui"):

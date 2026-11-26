@@ -30,6 +30,7 @@ class MemoryStorage:
         self._rooms: Dict[str, Room] = {}
         self._devices: Dict[str, Device] = {}
         self._targets: Dict[tuple, Target] = {}
+        self._event_ids = set()
         self._history: List[Dict[str, Any]] = []
         self._load(house)
 
@@ -44,6 +45,7 @@ class MemoryStorage:
                 type=item["type"],
                 room_id=item["room"],
                 state=dict(item.get("state", {})),
+                connected=item.get("connected", True),
             )
             self._devices[device.id] = device
 
@@ -64,6 +66,14 @@ class MemoryStorage:
         """Возвращает помещение по идентификатору."""
         self._check()
         return self._rooms.get(room_id)
+
+    def save_room(self, room: Room) -> None:
+        self._check()
+        self._rooms[room.id] = room
+
+    def delete_room(self, room_id: str) -> None:
+        self._check()
+        self._rooms.pop(room_id, None)
 
     def devices(self, room_id: Optional[str] = None) -> List[Device]:
         """Возвращает устройства, при необходимости только в помещении."""
@@ -114,6 +124,10 @@ class MemoryStorage:
         """Добавляет запись в историю событий и ошибок."""
         self._check()
         self._history.append(record)
+        if record.get('event_id'): self._event_ids.add(record['event_id'])
+
+    def seen_event(self, event_id):
+        return event_id in self._event_ids
 
     def history_contains(
         self,

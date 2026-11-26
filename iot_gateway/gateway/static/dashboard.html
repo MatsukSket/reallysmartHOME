@@ -47,6 +47,8 @@ h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute
 </main>
 <script>
 const $ = s => document.querySelector(s);
+let readOnly = true;
+const retired = new Set();
 const devs = {};            // id -> {meta, state, telemetry, last_error}
 const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const fmt = v => typeof v === 'number' ? (Math.round(v*10)/10) : v;
@@ -59,17 +61,18 @@ function log(html){
 }
 
 function render(id){
-  const d = devs[id]; let el = document.getElementById('dev'+id);
+  const d = devs[id]; if (!d?.meta) return;
+  let el = document.getElementById('dev'+id);
   if (!el){
     el = document.createElement('div'); el.className='card'; el.id='dev'+id; $('#grid').append(el);
     el.innerHTML = `<h3>${esc(d.meta.type)} #${id}</h3><div class="addr">${esc(d.meta.address||'')}</div>
       <div class="vals"></div><div class="errbox"></div><form></form>`;
-    const f = el.querySelector('form'); const rules = (d.meta.rules||{}).set_state || {};
+    const f = el.querySelector('form'); const rules = readOnly ? {} : ((d.meta.rules||{}).set_state || {});
     for (const [p, r] of Object.entries(rules)){
       const lab = document.createElement('label'); lab.textContent = p + ' ';
       let inp;
       if (r.enum){ inp = document.createElement('select');
-        inp.innerHTML = '<option value="">—</option>' + r.enum.map(v=>`<option>${esc(v)}</option>`).join('');
+        inp.innerHTML = '<option value="">—</option>' + r.enum.map((v, index)=>`<option value="${index}">${esc(v)}</option>`).join('');
       } else { inp = document.createElement('input'); inp.type='number'; inp.step='any';
         inp.placeholder = `${r.min ?? ''}…${r.max ?? ''}`; }   // намеренно без min/max: можно проверить отказ
       inp.name = p; lab.append(inp); f.append(lab);
@@ -77,10 +80,11 @@ function render(id){
     if (Object.keys(rules).length){
       const b = document.createElement('button'); b.textContent='Отправить команду'; f.append(b);
       f.onsubmit = async e => { e.preventDefault(); const params = {};
-        for (const i of f.elements) if (i.name && i.value!=='') params[i.name] = i.type==='number' ? Number(i.value) : i.value;
+        for (const i of f.elements) if (i.name && i.value!=='') params[i.name] = i.type==='number' ? Number(i.value) : rules[i.name].enum[Number(i.value)];
         if (!Object.keys(params).length) return;
         const r = await fetch('/commands',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({commands:[{device_id:id,command:'set_state',params}]})});
+        if (!r.ok) { log('Команда отклонена (HTTP ' + r.status + ')'); return; }
         const j = await r.json();
         for (const x of j.results)
           log(`→ <b>#${id}</b> ${esc(JSON.stringify(params))} ⇒ <span class="s-${x.status}">${x.status}</span> ${esc(x.detail||'')}`);
@@ -88,21 +92,39 @@ function render(id){
     } else f.remove();
   }
   const vals = [];
-  for (const [k,v] of Object.entries(d.telemetry||{})) vals.push(`<div class="kv"><span>${esc(k)}</span><span class="big">${fmt(v)}</span></div>`);
+  for (const [k,v] of Object.entries(d.telemetry||{})) vals.push(`<div class="kv"><span>${esc(k)}</span><span class="big">${esc(fmt(v))}</span></div>`);
   for (const [k,v] of Object.entries(d.state||{})) vals.push(`<div class="kv"><span>${esc(k)}</span><span>${esc(fmt(v))}</span></div>`);
   el.querySelector('.vals').innerHTML = vals.join('') || '<div class="addr">данных ещё нет</div>';
   el.classList.toggle('alert', !!d.last_error);
   el.querySelector('.errbox').innerHTML = d.last_error ? `<div class="err">⚠ ${esc(d.last_error.code)} ${esc(d.last_error.message||'')}</div>` : '';
 }
 
-function onEvent(ev){
-  const d = devs[ev.device_id]; if (!d) return;
-  if (ev.kind==='state') Object.assign(d.state, ev.payload);
-  else if (ev.kind==='telemetry') Object.assign(d.telemetry, ev.payload);
-  else d.last_error = ev.payload;
-  render(ev.device_id);
-  if (ev.kind!=='telemetry' || document.getElementById('showTel')?.checked)
-    log(`<span class="k-${ev.kind}">${ev.kind}</span> <b>#${ev.device_id}</b> ${esc(JSON.stringify(ev.payload))}`);
+async function onEvent(ev){
+  const id = ev.device_id;
+  if (ev.kind === 'removal') {
+    retired.add(id);
+    delete devs[id];
+    document.getElementById('dev' + id)?.remove();
+    log('Удалён прибор <b>#' + id + '</b>');
+    return;
+  }
+  if (retired.has(id)) return;
+  if (ev.kind === 'discovery') {
+    const entry = devs[id] ?? (devs[id] = {state: {}, telemetry: {}, last_error: null});
+    if (!entry.meta) {
+      const devices = await (await fetch('/devices')).json();
+      if (retired.has(id)) return;
+      entry.meta = devices.find(device => device.id === id);
+    }
+  }
+  const d = devs[id];
+  if (!d) return;
+  if (ev.kind === 'state') Object.assign(d.state, ev.payload);
+  else if (ev.kind === 'telemetry') Object.assign(d.telemetry, ev.payload);
+  else if (ev.kind === 'error') d.last_error = ev.payload;
+  render(id);
+  if (ev.kind !== 'telemetry' || $('#showTel')?.checked)
+    log(`<span class="k-${ev.kind}">${ev.kind}</span> <b>#${id}</b> ${esc(JSON.stringify(ev.payload))}`);
 }
 
 async function health(){
@@ -115,10 +137,13 @@ async function health(){
 
 (async()=>{
   const list = await (await fetch('/devices')).json();
-  const snap = (await (await fetch('/api/demo/snapshot')).json()).devices;
-  for (const m of list){ const s = snap[m.id]||{};
+  const snapshot = await (await fetch('/api/demo/snapshot')).json();
+  readOnly = snapshot.read_only;
+  for (const id of snapshot.retired) retired.add(id);
+  if (readOnly) log('Команды доступны в основном интерфейсе дома.');
+  for (const m of list){ if (retired.has(m.id)) continue; const s = snapshot.devices[m.id]||{};
     devs[m.id] = {meta:m, state:s.state||{}, telemetry:s.telemetry||{}, last_error:s.last_error||null}; render(m.id); }
-  new EventSource('/api/demo/stream').onmessage = e => onEvent(JSON.parse(e.data));
+  new EventSource('/api/demo/stream').onmessage = e => onEvent(JSON.parse(e.data)).catch(() => log('Не удалось обновить каталог'));
   setInterval(health, 2000); health();
 })();
 </script>

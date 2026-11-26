@@ -28,7 +28,27 @@ async def test_http_commands_endpoint_validation_and_unavailable():
             res = r.json()["results"]
             assert [x["status"] for x in res] == ["rejected", "unavailable"]
             assert (await c.get("/health")).json() == {"adapter": "godot", "transport_connected": False}
-            assert len((await c.get("/devices")).json()) == 4
+            assert {d["id"] for d in (await c.get("/devices")).json()} == {123, 124, 125, 126, 127, 128}
+
+
+async def test_conflicting_batch_is_rejected_without_dispatch():
+    settings = {**load_settings(), "adapter": "godot", "godot_port": 0, "registry_path": str(CFG)}
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        called = []
+
+        async def execute(cmd):
+            called.append(cmd)
+            raise AssertionError("Пакет с конфликтом не должен выполняться")
+
+        app.state.adapter.execute = execute
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
+            response = await client.post("/commands", json={"commands": [
+                {"cmd_id": "same", "device_id": 123, "params": {"power": "on"}},
+                {"cmd_id": "same", "device_id": 123, "params": {"power": "off"}},
+            ]})
+        assert response.status_code == 409
+        assert called == []
 
 
 class FakeMqtt:
@@ -64,7 +84,8 @@ async def test_z2m_confirm_by_state_and_timeout():
     assert events[-1].payload["code"] == "DEVICE_OFFLINE"
 
 
-async def test_demo_hub_collects_events_and_serves_snapshot():
+async def test_demo_hub_collects_events_and_serves_snapshot(monkeypatch):
+    monkeypatch.setenv("GATEWAY_TOKEN", "test-token")
     settings = {**load_settings(), "adapter": "godot", "godot_host": "127.0.0.1", "godot_port": 0,
                 "registry_path": str(CFG), "demo_ui": True}
 
@@ -77,4 +98,13 @@ async def test_demo_hub_collects_events_and_serves_snapshot():
             assert (await c.post("/api/gateway/events", json=ev)).status_code == 200
             snap = (await c.get("/api/demo/snapshot")).json()
             assert snap["devices"]["123"]["last_error"]["code"] == "E04"
+            assert snap["read_only"]
+            await c.post("/api/gateway/events", json={**ev, "kind": "discovery", "device_id": 1999,
+                                                     "payload": {"type": "light", "name": "Лампа"}})
+            snap = (await c.get("/api/demo/snapshot")).json()
+            assert snap["devices"]["1999"]["last_error"] is None
+            await c.post("/api/gateway/events", json={**ev, "kind": "removal", "payload": {}})
+            await c.post("/api/gateway/events", json=ev)
+            snap = (await c.get("/api/demo/snapshot")).json()
+            assert snap["retired"] == [123] and "123" not in snap["devices"]
             assert "<title>IoT Gateway" in (await c.get("/ui")).text

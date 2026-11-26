@@ -5,7 +5,8 @@
       "native": {"godot": "Kitchen/Boiler", "zigbee2mqtt": "boiler"},
       "commands": {"set_state": {
         "power": {"enum": ["on", "off"]},
-        "target_temp": {"min": 30, "max": 80}
+        "target_temp": {"min": 30, "max": 80},
+        "reset_error": {"enum": [true]}
       }},
       "telemetry_ranges": {"temperature": [-40, 120], "pressure": [0, 6]}
     },
@@ -30,6 +31,20 @@
       "native": {"godot": "Bath/LeakSensor", "zigbee2mqtt": "leak_sensor"},
       "commands": {},
       "telemetry_ranges": {"humidity": [0, 100], "battery": [0, 100]}
+    },
+    {
+      "id": 127, "type": "light",
+      "native": {"godot": "Spare/Lamp"},
+      "commands": {"set_state": {
+        "power": {"enum": ["on", "off"]},
+        "brightness": {"min": 1, "max": 100}
+      }}
+    },
+    {
+      "id": 128, "type": "temperature_sensor",
+      "native": {"godot": "Living/Thermometer"},
+      "commands": {},
+      "telemetry_ranges": {"temperature": [-40, 80]}
     }
   ]
 }

@@ -61,6 +61,19 @@ class Registry:
         ]
         return cls(devices, adapter_name)
 
+    def discover_godot(self, ident: int, node: str, kind: str) -> Device | None:
+        if not 1000 <= ident <= 2**32 + 999 or node != f"Virtual/{ident}":
+            return None
+        template = next((device for device in self._by_id.values() if device.id < 1000 and device.type == kind), None)
+        if template is None:
+            return None
+        known = self.get(ident)
+        if known is not None:
+            return known if self.by_native(node) is known and known.type == kind else None
+        device = Device(ident, kind, {"godot": node}, template.commands, template.telemetry_ranges)
+        self._by_id[ident] = self._by_native[node] = device
+        return device
+
     # --- поиск ---
     def get(self, device_id: int) -> Device | None:
         return self._by_id.get(device_id)

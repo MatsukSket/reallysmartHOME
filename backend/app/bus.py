@@ -11,6 +11,7 @@
     command.finished   команда завершена (выполнена или нет)
     schedule.fired     сработало расписание
     target.changed     изменилось целевое значение
+    catalog.changed    изменились комнаты или подключение устройств
     event.rejected     сообщение отброшено как некорректное, повторное
                        или запоздавшее
     minute.passed      наступила очередная минута
@@ -28,6 +29,7 @@ DEVICE_ERROR = "device.error"
 COMMAND_FINISHED = "command.finished"
 SCHEDULE_FIRED = "schedule.fired"
 TARGET_CHANGED = "target.changed"
+CATALOG_CHANGED = "catalog.changed"
 EVENT_REJECTED = "event.rejected"
 MINUTE_PASSED = "minute.passed"
 
@@ -38,6 +40,7 @@ ALL_TOPICS = (
     COMMAND_FINISHED,
     SCHEDULE_FIRED,
     TARGET_CHANGED,
+    CATALOG_CHANGED,
     EVENT_REJECTED,
     MINUTE_PASSED,
 )

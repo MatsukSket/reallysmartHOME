@@ -54,6 +54,9 @@ def accept(solver: "Solver", event: Event) -> List[Message]:
         )
         return messages
 
+    if device.retired:
+        return messages
+
     if not is_valid_value(device.type, event):
         storage.append_history(
             {
@@ -79,7 +82,9 @@ def accept(solver: "Solver", event: Event) -> List[Message]:
     moment = event.time or received_at
 
     # Повтор: совпадают устройство, время и вид события.
-    if storage.history_contains(device.id, event.kind, moment, event.command_id):
+    if event.event_id and storage.seen_event(event.event_id):
+        return messages
+    if not event.event_id and storage.history_contains(device.id, event.kind, moment, event.command_id):
         return messages
 
     storage.append_history(
@@ -91,10 +96,14 @@ def accept(solver: "Solver", event: Event) -> List[Message]:
             "time": moment,
             "received_at": received_at,
             "command_id": event.command_id,
+            "event_id": event.event_id,
         }
     )
 
+    if device.last_event_time and moment < device.last_event_time:
+        return []
     if event.kind == "error":
+        device.last_event_time = moment
         apply_error(solver, device, event, received_at)
         messages.append(
             (
@@ -227,6 +236,7 @@ def apply_reading(
     if previous is not None and moment < previous:
         return []
 
+    device.state.update(event.measurements)
     device.state["value"] = event.value
     device.last_event_time = moment
     device.received_at = received_at
@@ -269,11 +279,16 @@ def confirm_pending(
 
         # Если модель вернула номер команды, сверка точная.
         if event.command_id is not None:
-            if event.command_id != model_id:
+            if event.command_id != model_id or not matches(pending.expected, changes):
                 continue
-        elif not matches(pending.expected, changes):
+        elif hasattr(solver.model, "dispatch") or not matches(pending.expected, changes):
             continue
 
+        if solver.clock.now() > pending.deadline:
+            continue
+        if hasattr(solver.model, 'dispatch') and solver.gateway_acks.get(model_id) is not True:
+            solver.gateway_acks[model_id] = event
+            continue
         from ..domain import CommandResult
 
         result = CommandResult(
@@ -282,6 +297,9 @@ def confirm_pending(
             model_command_id=model_id,
         )
         solver.confirm(model_id, result)
+        if event.event_id:
+            solver.journal.write(pending.impact_id, 'шлюз', 'получено состояние симулятора', subject=device.id,
+                                 status=STATUS_DONE, reason=f'cmd_id={model_id}, event_id={event.event_id}', at=solver.clock.now())
         messages.append(
             (
                 bus.COMMAND_FINISHED,

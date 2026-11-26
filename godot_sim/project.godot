@@ -1,0 +1,11 @@
+config_version=5
+[application]
+config/name="reallysmartHOME · Симуляция"
+run/main_scene="res://scenes/home.tscn"
+[autoload]
+GatewayClient="*res://scripts/gateway_client.gd"
+[display]
+window/size/viewport_width=680
+window/size/viewport_height=490
+[rendering]
+renderer/rendering_method="gl_compatibility"

@@ -18,7 +18,8 @@ class RealClock:
 
     def now(self) -> datetime:
         """Возвращает текущий момент."""
-        return datetime.now()
+        from datetime import timezone
+        return datetime.now(timezone.utc).replace(tzinfo=None)
 
     def sleep(self, seconds: float, wake: Optional[object] = None) -> None:
         """Ожидает указанное время или просыпается раньше по сигналу."""

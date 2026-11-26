@@ -1,3 +1,5 @@
+Для демонстрации с решателем запускайте [проект из корня](../README.md). Инструкции ниже относятся к отдельному шлюзу.
+
 # IoT Gateway (модуль сопряжения)
 
 Шлюз между FastAPI-бэкендом и устройствами. Бэкенд видит только **канонический JSON**; что за ним — симуляция Godot
@@ -23,13 +25,13 @@ python tools/fake_godot.py
 На панели: карточки устройств с живой телеметрией, журнал событий и квитанций, форма команд.
 Попробуйте `target_temp = 500` — шлюз ответит `rejected`; остановите эмулятор и отправьте команду — `unavailable`.
 
-В боевом режиме `BACKEND_EVENTS_URL` указывает на ваш FastAPI, а `DEMO_UI` не ставится.
+При общем запуске `BACKEND_EVENTS_URL` указывает на FastAPI, сервисы используют общий `GATEWAY_TOKEN`, а панель показывает диагностику. Для автономной проверки без служебного токена на панели доступны формы команд.
 Тесты: `pytest` (из корня проекта).
 
 ## Контракт с бэкендом
 * Шлюз → бэкенд: `POST BACKEND_EVENTS_URL`, тело `DeviceEvent`
-  `{"event_id","device_id":123,"kind":"telemetry|state|error","ts","payload":{...},"source":"godot"}`
-  (бэкенду нужно вернуть 2xx; иначе шлюз повторит доставку ошибок).
+  `{"event_id","device_id":123,"kind":"telemetry|state|error|discovery|removal","ts","payload":{...},"source":"godot"}`
+  (временные сбои приводят к повторной доставке критичных событий).
 * Бэкенд → шлюз: `POST /commands` `{"commands":[{"device_id":123,"command":"set_state","params":{"power":"on","target_temp":60}}]}`
   → `{"results":[{"cmd_id","device_id","status":"confirmed|rejected|timeout|unavailable|failed","detail"}]}`
 

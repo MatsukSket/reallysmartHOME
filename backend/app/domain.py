@@ -5,6 +5,7 @@
 только данные и правила проверки, которые используют модули решателя.
 """
 
+from math import isfinite
 from dataclasses import dataclass, field
 from datetime import datetime, time
 from typing import Any, Dict, List, Optional
@@ -78,6 +79,7 @@ class OperationSpec:
     min_value: Optional[float] = None
     max_value: Optional[float] = None
     requires_error: bool = False
+    choices: tuple[str, ...] = ()
 
     def desired(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Возвращает состояние, которого требует операция."""
@@ -93,7 +95,9 @@ class OperationSpec:
         if "value" not in params:
             return "не указано значение параметра"
         value = params["value"]
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
+        if self.choices:
+            return None if value in self.choices else "недопустимое значение параметра"
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or (isinstance(value, float) and not isfinite(value)):
             return "значение параметра должно быть числом"
         if self.min_value is not None and value < self.min_value:
             return "значение меньше допустимого"
@@ -169,7 +173,16 @@ def _specs() -> Dict[str, DeviceType]:
 
     result["conditioner"] = DeviceType(
         name="conditioner",
-        operations=_on_off("conditioner"),
+        operations={
+            **_on_off("conditioner"),
+            "set_target_temperature": OperationSpec(
+                "set_target_temperature", "target_temp", param_property="target_temp", min_value=16, max_value=30,
+            ),
+            "set_mode": OperationSpec(
+                "set_mode", "mode", param_property="mode", choices=("cool", "heat", "fan", "auto"),
+            ),
+        },
+        state_ranges={"target_temp": (16, 30)},
         regulates=PARAM_TEMPERATURE,
         direction=-1,
     )
@@ -302,6 +315,8 @@ class Device:
     last_event_time: Optional[datetime] = None
     # Время получения этого события решателем: по нему считается неактуальность.
     received_at: Optional[datetime] = None
+    connected: bool = True
+    retired: bool = False
 
     @property
     def spec(self) -> DeviceType:
@@ -469,6 +484,8 @@ class Event:
     time: Optional[datetime] = None
     code: Optional[str] = None
     command_id: Optional[str] = None
+    event_id: Optional[str] = None
+    measurements: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

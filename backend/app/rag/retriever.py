@@ -1,45 +1,24 @@
-import os
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
+import re
+from .indexer import ROOT, encoder, passages
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DB_DIR = os.path.join(BASE_DIR, "data", "chroma_db")
+class Knowledge:
+    def __init__(self, vector=False): self.vector=vector
+    def search(self,query,limit=5):
+        if self.vector:
+            import chromadb
+            version=(ROOT/"CURRENT").read_text().strip()
+            coll=chromadb.PersistentClient(path=str(ROOT/version)).get_collection("manuals")
+            codes=re.findall(r"\bE\d{2}\b",query.upper())
+            opts={"where":{"code":codes[0]}} if codes else {}
+            r=coll.query(query_embeddings=encoder().encode([query],normalize_embeddings=True).tolist(),
+                         n_results=limit,**opts)
+            return [dict(meta,text=t) for meta,t,dist in zip(r["metadatas"][0],r["documents"][0],r["distances"][0])
+                    if codes or 1.0-dist/2 >= 0.35]
+        words=set(re.findall(r"\w+",query.lower()))
+        docs=list(passages())
+        def score(d):
+            return len(words.intersection(re.findall(r"\w+",d["text"].lower()))) + 10*(d["code"].lower() in words)
+        return [d for d in sorted(docs,key=score,reverse=True) if score(d)>0][:limit]
 
-embeddings_model = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-)
-
-def get_context(query: str, k: int = 3) -> str:
-    if not os.path.exists(DB_DIR):
-        raise FileNotFoundError(f"Database directory not found at {DB_DIR}. Run indexer.py first.")
-
-    vector_db = Chroma(
-        persist_directory=DB_DIR,
-        embedding_function=embeddings_model
-    )
-
-    results = vector_db.similarity_search(query, k=k)
-
-    if not results:
-        return "No relevant documentation found."
-
-    formatted_chunks = []
-    for i, doc in enumerate(results, start=1):
-        source = doc.metadata.get("source", "unknown")
-        source_filename = os.path.basename(source)
-        chunk_entry = f"[Document {i} | Source: {source_filename}]\n{doc.page_content.strip()}"
-        formatted_chunks.append(chunk_entry)
-
-    return "\n\n---\n\n".join(formatted_chunks)
-
-if __name__ == "__main__":
-    print("Testing Retriever module. Type 'exit' to quit.")
-    while True:
-        user_query = input("\nEnter query > ")
-        if user_query.strip().lower() in ["exit", "quit", "q"]:
-            break
-        
-        context = get_context(user_query)
-        print("\n=== RETRIEVED CONTEXT ===")
-        print(context)
-        print("=========================")
+def get_context(query,k=3):
+    return "\n\n".join(d["text"] for d in Knowledge(True).search(query,k))

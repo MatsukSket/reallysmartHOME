@@ -58,13 +58,29 @@ def test_browser(house):
         page.locator("[data-tab=s-log]").click()
         sync.expect(page.locator("#audit")).to_contain_text("E04",timeout=10000)
         page.get_by_role("button",name="Помощник",exact=True).click()
-        page.locator("#chat input").fill("Что означает E04?")
+        message = page.get_by_role("textbox", name="Сообщение помощнику")
+        sync.expect(message).to_have_value("")
+        assert message.get_attribute("placeholder") is None
+        sync.expect(message).to_have_attribute("autocomplete", "off")
+        message.fill("Что означает E04?")
         page.get_by_role("button",name="Отправить").click()
         sync.expect(page.locator("#answer")).not_to_have_text("Ищу ответ…",timeout=180000)
         sync.expect(page.locator("#sources")).to_contain_text("boiler_baxi",timeout=5000)
         answer=page.locator("#answer").inner_text()
         assert "давлен" in answer.lower(),answer
         print("Ответ помощника:",answer)
+        if os.getenv("CHECK_COURSEWORK_RAG"):
+            message.fill("Котёл выдал E04 и дома душно. Предложи переключить кондиционер на вентиляцию.")
+            page.get_by_role("button", name="Отправить").click()
+            sync.expect(page.locator("#sources")).to_contain_text("conditioner_sim", timeout=120000)
+            sync.expect(page.locator("#sources")).to_contain_text("boiler_baxi")
+            sync.expect(page.locator("#answer")).to_contain_text("давлен")
+            page.locator("#confirm").click()
+            sync.expect(page.locator("#answer")).to_contain_text("выполнено", timeout=30000)
+            home = page.evaluate("api('home')")
+            ac = next(d for room in home["rooms"] for d in room["devices"] if d["id"] == "conditioner_living")
+            assert ac["state"]["mode"] == "fan" and ac["state"]["power"] is True
+
         page.locator("[data-tab=s-home]").click()
         page.locator("#home-rooms button").filter(has_text="Кухня").click()
         page.locator("#dev-list button").filter(has_text="Котёл").click()
@@ -154,6 +170,11 @@ def test_browser(house):
         else:
             sync.expect(page.locator("#add-device")).to_contain_text(lamp_name)
         page.locator("#m-add [data-close]").click()
+
+        page.locator("[data-tab=s-chat]").click()
+        page.locator("#chat input").fill("Выставь кондиционеру 23 градуса")
+        page.locator("#chat button").click()
+        sync.expect(page.locator("#answer")).to_contain_text("выполнено")
 
         page.clock.install()
         notification = page.locator("#status")

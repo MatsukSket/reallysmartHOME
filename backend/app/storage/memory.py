@@ -46,6 +46,7 @@ class MemoryStorage:
                 room_id=item["room"],
                 state=dict(item.get("state", {})),
                 connected=item.get("connected", True),
+                model=item.get("model", ""),
             )
             self._devices[device.id] = device
 

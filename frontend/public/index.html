@@ -114,9 +114,8 @@
 <!-- 4. ПОМОЩНИК RAG -->
 <section id="s-chat" class="screen px-5 pt-10">
   <h1 class="text-4xl font-semibold tracking-tight">Помощник</h1>
-  <p class="mute text-sm mt-1">Отвечает по инструкциям к вашим приборам</p>
 <small id="provider"></small><div class="mt-7"><p id="question" class="text-right"></p><div id="reply" hidden class="glass p-4"><p id="answer"></p><div id="sources"></div><button id="confirm" hidden>Подтвердить действие</button></div></div>
-<form id="chat" class="mt-6 glass p-2 flex items-center gap-2"><input class="flex-1" name="message" placeholder="Напишите вопрос" required><button class="btn btn-acc rounded-xl p-3" aria-label="Отправить"><svg class="ico"><use href="#i-send"/></svg></button></form>
+<form id="chat" class="mt-6 glass p-2 flex items-center gap-2"><input class="flex-1" name="message" aria-label="Сообщение помощнику" autocomplete="off" required><button class="btn btn-acc rounded-xl p-3" aria-label="Отправить"><svg class="ico"><use href="#i-send"/></svg></button></form>
 </section>
 
 <!-- 5. СОБЫТИЯ -->
@@ -187,6 +186,12 @@
 <button id="sessions">Мои сессии</button>
 <div id="devices">
 </div>
+<details class="admin-only"><summary>База знаний</summary>
+<form id="manual-upload">
+<label>Руководство в формате Markdown <input type="file" name="manual" accept=".md,text/markdown" required></label>
+<button>Загрузить и проиндексировать</button>
+<p id="manual-feedback" role="status"></p>
+</form></details>
 <form id="invite" hidden>
 <input name="username" placeholder="Имя жильца" required>
 <input type="password" name="password" placeholder="Пароль администратора" required>
@@ -233,4 +238,4 @@
   </div>
 </div>
 
-</div><output id="status" aria-live="polite"></output><script src="/home.js?v=stable-chat"></script></body></html>
+</div><output id="status" aria-live="polite"></output><script src="/home.js?v=grounded-context"></script></body></html>

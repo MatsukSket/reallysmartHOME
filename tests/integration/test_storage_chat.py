@@ -47,6 +47,7 @@ def test_invites_sessions_and_foreign_confirmation(local):
         b.headers["Authorization"]="Bearer "+grant["access_token"]
         assert b.get("/api/admin/users").status_code==403
         assert b.post("/api/rooms", json={"name": "Гараж"}).status_code == 403
+        assert b.post("/api/knowledge/manuals", json={"filename": "private.md", "text": "Текст"}).status_code == 403
         assert b.put("/api/devices/boiler/connection", json={"room_id": None}).status_code == 403
         assert b.post("/api/auth/invite/accept",json=dict(code=code,password="again")).status_code==400
         admin=b.post("/api/auth/login",json=dict(username="admin",password="secret-test")).json()

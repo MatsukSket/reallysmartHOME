@@ -24,7 +24,8 @@ def discovered_device(ident, payload):
         raise ValueError("Тип устройства не поддерживается")
     if not isinstance(name, str) or not name.strip() or len(name) > 60:
         raise ValueError("Некорректное название устройства")
-    return Device(id=f"sim_{ident}", name=name.strip(), type=DISCOVERY_TYPES[kind], room_id="", connected=False)
+    return Device(id=f"sim_{ident}", name=name.strip(), type=DISCOVERY_TYPES[kind],
+                  room_id="", connected=False, model="Godot AC" if kind == "air_conditioner" else "")
 
 
 def simulation_house(house):
@@ -32,9 +33,9 @@ def simulation_house(house):
     if {d["id"]: d["native"]["godot"] for d in registry["devices"]} != dict(zip(IDS, NODES)):
         raise ValueError("Каталог шлюза не соответствует отображению симуляции")
     ac = next(d.copy() for d in house["devices"] if d["type"] == "conditioner")
-    ac.update(id=IDS[124], room="living", name="Кондиционер в гостиной")
+    ac.update(id=IDS[124], room="living", name="Кондиционер в гостиной", model="Godot AC")
     devices = [d.copy() for d in house["devices"] if d["id"] in IDS.values()] + [ac]
-    next(d for d in devices if d["id"]=="boiler")["room"]="kitchen"
+    next(d for d in devices if d["id"] == "boiler").update(room="kitchen", model="Baxi Eco 4s")
     devices.append({
         "id": IDS[127], "name": "Запасная лампа", "type": "light",
         "room": "", "connected": False, "state": {"power": False, "brightness": 60},

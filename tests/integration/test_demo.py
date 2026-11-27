@@ -79,6 +79,11 @@ def test_loop(house):
         return next(d for r in c.get("/api/home").json()["rooms"] for d in r["devices"] if d["id"]==ident)
     ac="conditioner_living"
     until(lambda:device(ac)["updated_at"])
+    until(lambda:device("boiler")["updated_at"])
+    setpoint = post("chat", message="Выставь котлу на кухне 60 градусов")
+    assert setpoint["result"]["status"] == "выполнено"
+    assert device("boiler")["state"]["coolant_temperature"] == 60
+
     result=post("commands",device_id=ac,operation="turn_on")
     assert result["status"]=="выполнено",result
     assert device(ac)["state"]["power"] is True
@@ -113,3 +118,31 @@ def test_loop(house):
     failure=post("commands",device_id=ac,operation="turn_on")
     assert failure["status"]=="не подтверждено" and not device(ac)["state"]["power"]
     assert c.get("/api/journal").json()["records"]
+
+def test_compound_executes_through_gateway(house):
+    client, fake, _, _ = house
+    if not fake.stdin:
+        pytest.skip("Сценарий запускаемой ошибки для этого теста предусмотрен в эмуляторе")
+
+    def post(path, **data):
+        return client.post("/api/" + path, json=data).raise_for_status().json()
+
+    def device(ident):
+        return next(d for room in client.get("/api/home").json()["rooms"] for d in room["devices"] if d["id"] == ident)
+
+    token = post("auth/login", username="admin", password="demo-test")["access_token"]
+    client.headers["Authorization"] = "Bearer " + token
+    until(lambda: device("sensor_temperature_living")["updated_at"])
+    until(lambda: device("conditioner_living")["updated_at"])
+    fake.stdin.write(b"e\n")
+    fake.stdin.flush()
+    until(lambda: device("boiler")["error"] == "E04")
+    combined = post("chat", message="Котёл выдал E04 и дома душно, что делать?")
+    assert combined["kind"] == "confirm"
+    assert any("conditioner_sim" in item for item in combined["sources"])
+    assert device("conditioner_living")["state"]["power"] is False
+    result = post("chat/confirm/" + combined["confirmation"])
+    assert result["status"] == "выполнено" and result["skipped"] == 0
+    assert device("conditioner_living")["state"]["mode"] == "fan"
+    assert device("conditioner_living")["state"]["power"] is True
+    assert device("boiler")["error"] == "E04"

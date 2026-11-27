@@ -19,3 +19,16 @@ class SolverResponse(BaseModel):
     intent_type: Literal["INFO_ONLY", "DIRECT_ACTION", "ACTION_REQUIRES_CONFIRMATION"] = Field(
         description="Тип взаимодействия: только справка, прямое действие или действие с подтверждением"
     )
+
+class GroundedCommand(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    device_id: str
+    operation: str
+    value: float | str | None
+    source_id: str
+
+
+class GroundedSolution(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    reply: str = Field(min_length=1, max_length=1600)
+    commands: list[GroundedCommand] = Field(max_length=2)

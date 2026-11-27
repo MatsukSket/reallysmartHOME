@@ -88,6 +88,10 @@ def attach(s,settings):
         for key,cls in (("devices",domain.Device),("rooms",domain.Room)):
             setattr(st,"_"+key,{d["id"]:cls(**d) for d in old[key]})
         for device in initial_devices:
+            saved = st.device(device.id)
+            if saved and not saved.model and device.model and saved.type == device.type:
+                saved.model = device.model
+                st.save_device(saved)
             if simulation and device.id == "sensor_temperature_living" and not old.get("standalone_thermometer"):
                 if st.room(device.room_id) is None:
                     device.connected = False

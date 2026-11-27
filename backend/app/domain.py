@@ -317,6 +317,7 @@ class Device:
     received_at: Optional[datetime] = None
     connected: bool = True
     retired: bool = False
+    model: str = ""
 
     @property
     def spec(self) -> DeviceType:

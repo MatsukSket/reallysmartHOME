@@ -35,7 +35,12 @@ async function api(path,body,method=body?'POST':'GET',retry=true){
 function form(id,fn){$(id).onsubmit=async e=>{e.preventDefault();try{await fn(Object.fromEntries(new FormData(e.target)))}catch(err){msg(err.message)}}}
 function el(tag,text){const n=document.createElement(tag);n.textContent=text;return n}
 function btn(label,fn){const b=el('button',label);b.onclick=async()=>{b.disabled=true;try{await fn()}catch(e){msg(e.message)}finally{b.disabled=false}};return b}
-function result(r){msg([r.status,r.reason].filter(Boolean).join(' · '))}
+function commandStatus(response) {
+ return [response.status, response.reason].filter(Boolean).join(' · ');
+}
+function result(response) {
+ msg(commandStatus(response));
+}
 let ROOMS=[], DEV=[], roomRecords=[], currentRoom='', currentDevice='';
 function ico(name){return '<svg class="ico"><use href="#i-'+name+'"/></svg>'}
 function esc(value){return String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}
@@ -266,9 +271,24 @@ async function update(){
  renderMap();renderHome();renderRoom();paintDevice();
  $('rules').replaceChildren(...h.schedules.map(s=>btn(s.at+' UTC · '+s.operation+' · убрать',async()=>{await api('schedules/'+s.id,null,'DELETE');await update()})),...h.rooms.flatMap(r=>r.targets.map(t=>btn(r.name+' · '+t.value+' °C · убрать',async()=>{await api('targets/'+r.id+'/'+t.parameter,null,'DELETE');await update()}))));
 
- const events=[...h.history.slice(-8).map(e=>[e.time,e.device_id,e.code||e.kind]),...j.records.map(e=>[e.at,e.subject,e.action,e.status,e.reason])];
- $('audit').replaceChildren(...events.map(([at,...parts])=>{const row=el('div',parts.filter(Boolean).join(' · '));row.className='glass p-4';row.append(el('small',new Date(at).toLocaleString()));return row}));
- if(!events.length)$('audit').textContent='Событий пока нет';
+ const events = h.history.slice(-8).map(e => ({at: e.time, parts: [e.device_id, e.code || e.kind], event: e}));
+ events.push(...j.records.map(e => ({at: e.at, parts: [e.subject, e.action, e.status, e.reason]})));
+ $('audit').replaceChildren(...events.map(({at, parts, event}) => {
+   const row = el('div', parts.filter(Boolean).join(' · '));
+   row.className = 'glass p-4';
+   row.append(el('small', new Date(at).toLocaleString()));
+   if (event && event.kind === 'error' && /^E\d{2}$/i.test(event.code)) {
+     row.append(btn('Объяснить ' + event.code, async () => {
+       const form = $('chat');
+       if (form.querySelector('button').disabled) return;
+       form.elements.message.value = 'Что означает ' + event.code + ' у ' + event.device_id + '?';
+       showTab('s-chat');
+       form.requestSubmit();
+     }));
+   }
+   return row;
+ }));
+ if (!events.length) $('audit').textContent = 'Событий пока нет';
 }
 var now=new Date(),hr=now.getHours(),ds=now.toLocaleDateString('ru-RU',{weekday:'long',day:'numeric',month:'long'});
 $('greet').textContent=hr<5?'Доброй ночи':hr<12?'Доброе утро':hr<18?'Добрый день':'Добрый вечер';
@@ -317,12 +337,14 @@ form('chat', async fields => {
    $('answer').textContent = reply.reply;
    for (const source of reply.sources) {
      const chunk = source.split('#')[1];
-     $('sources').append(btn('Читать ' + source, async () => {
+     const detail = reply.source_details?.find(item => item.chunk_id === chunk);
+     const label = detail?.section ? detail.source + ' · ' + detail.section : source;
+     $('sources').append(btn('Читать ' + label, async () => {
        const document = await api('sources/' + encodeURIComponent(chunk));
        $('sources').append(el('p', document.text));
      }));
    }
-   if (reply.result) result(reply.result);
+   if (reply.result) $('answer').textContent = reply.reply + ' · ' + commandStatus(reply.result);
    pending = reply.confirmation;
    $('confirm').hidden = !pending;
  } catch (error) {
@@ -331,7 +353,44 @@ form('chat', async fields => {
    submit.disabled = false;
  }
 });
-$('confirm').onclick=async()=>{try{result(await api('chat/confirm/'+pending,{}))}catch(e){msg(e.message)}$('confirm').hidden=true};
+$('confirm').onclick = async () => {
+ if (!pending) return;
+ const confirmation = pending;
+ const explanation = $('answer').textContent;
+ pending = '';
+ $('confirm').hidden = true;
+ const submit = $('chat').querySelector('button');
+ submit.disabled = true;
+ $('answer').textContent = 'Ожидаю подтверждение от устройства…';
+ try {
+   const response = await api('chat/confirm/' + encodeURIComponent(confirmation), {});
+   const execution = response.results
+     ? response.results.map(item => item.operation + ' · ' + commandStatus(item)).join('\n')
+     : commandStatus(response);
+   $('answer').textContent = explanation + '\n' + execution +
+     (response.skipped ? '\nПропущено действий: ' + response.skipped : '');
+ } catch (error) {
+   $('answer').textContent = error.message;
+ } finally {
+   submit.disabled = false;
+ }
+};
+form('manual-upload', async ({manual}) => {
+ const feedback = $('manual-feedback');
+ const submit = $('manual-upload').querySelector('button');
+ submit.disabled = true;
+ feedback.textContent = 'Собираю индекс…';
+ try {
+   const text = new TextDecoder('utf-8', {fatal: true}).decode(await manual.arrayBuffer());
+   const response = await api('knowledge/manuals', {filename: manual.name, text});
+   feedback.textContent = 'Руководство добавлено: ' + response.source;
+   $('manual-upload').reset();
+ } catch (error) {
+   feedback.textContent = error.message;
+ } finally {
+   submit.disabled = false;
+ }
+});
 form('invite',async f=>{await api('auth/admin-mode',{password:f.password});$('code').textContent=(await api('admin/invites',{username:f.username})).code});
 $('sessions').onclick=async()=>{try{const {sessions}=await api('auth/sessions');$('devices').replaceChildren(...sessions.map(s=>s.current?el('p',s.device+' · текущая'):btn('Отозвать '+s.device,async()=>{await api('auth/sessions/'+s.id,null,'DELETE');$('sessions').click()})))}catch(e){msg(e.message)}};
 $('logout').onclick=async()=>{try{await api('auth/logout',{});stream.abort();location.reload()}catch(e){msg(e.message)}};

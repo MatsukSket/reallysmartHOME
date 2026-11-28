@@ -153,8 +153,7 @@ func refresh_card(device: DeviceScript) -> void:
     var status: String
     match device.kind:
         "boiler":
-            var label := power if device.fault.is_empty() else "Ошибка " + device.fault
-            status = "%s\nВода %.1f → %d °C\nДавление %.1f бар" % [label, device.temperature, state.target_temp, device.pressure]
+            status = "%s\nВода %.1f → %d °C\nДавление %.1f бар" % [power, device.temperature, state.target_temp, device.pressure]
         "air_conditioner":
             status = "%s · %s\nВоздух %.1f → %d °C" % [power, MODES[state.mode], device.temperature, state.target_temp]
         "light":
@@ -168,6 +167,8 @@ func refresh_card(device: DeviceScript) -> void:
         _:
             var wet := "Обнаружена протечка" if state.wet else "Датчик сухой"
             status = "%s\nЗаряд %d %%" % [wet, state.battery]
+    if not device.fault.is_empty():
+        status = "Ошибка %s · %s" % [device.fault, status]
     cards[device.gateway_node].values.text = status
 
 func remove_card(device: DeviceScript) -> void:
@@ -244,6 +245,17 @@ func open_form(kind: String, device: DeviceScript = null) -> void:
             modes.add_item(MODES[key])
         modes.select(MODES.keys().find(values.mode))
         control_row("Режим", modes)
+    var fault_options: OptionButton
+    var meanings := DeviceScript.error_codes(kind)
+    var fault_codes: Array = [""] + meanings.keys()
+    if not meanings.is_empty():
+        fault_options = OptionButton.new()
+        fault_options.name = "fault_options"
+        fault_options.add_item("Нет ошибки")
+        for code in meanings:
+            fault_options.add_item("%s · %s" % [code, meanings[code]])
+        fault_options.select(fault_codes.find(device.fault) if device else 0)
+        control_row("Ошибка", fault_options)
     var physical := physical_fields(kind, values, device)
     feedback = Label.new()
     feedback.modulate = Color("#ffacac")
@@ -281,6 +293,8 @@ func open_form(kind: String, device: DeviceScript = null) -> void:
         if kind == "light":
             number.apply()
             state.brightness = int(number.value)
+        if fault_options:
+            state.fault = fault_codes[fault_options.selected]
         if device:
             device_edited.emit(device, state)
         else:

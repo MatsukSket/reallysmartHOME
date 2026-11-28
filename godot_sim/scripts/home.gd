@@ -37,10 +37,11 @@ func register_device(node: String, title: String, kind: String, state: Dictionar
     device.kind = kind
     device.state = PanelScript.default_state(kind)
     device.state.merge(state, true)
+    device.state.erase("fault")
     device.virtual_id = ident
     add_child(device)
     device.add_to_group("smart_device")
-    device.apply_simulation(device.state)
+    device.apply_simulation(device.state.merged({"fault": state.get("fault", "")}))
     devices[node] = device
     device.changed.connect(on_device_changed.bind(device))
     panel.add_card(device)
@@ -73,7 +74,7 @@ func save_inventory() -> Error:
             var section := str(device.virtual_id)
             inventory.set_value(section, "kind", device.kind)
             inventory.set_value(section, "title", device.title)
-            inventory.set_value(section, "state", device.state)
+            inventory.set_value(section, "state", device.state.merged({"fault": device.fault}))
     inventory.set_value("removed", "devices", removed_devices)
     return inventory.save(inventory_path)
 
@@ -88,20 +89,21 @@ func create_device(title: String, kind: String, state: Dictionary) -> void:
     else:
         panel.notice("Прибор добавлен. Подключите его на сайте через «Добавить устройство».")
     device.announce()
-    report_device(device, not device.fault.is_empty())
+    report_device(device)
 
 func edit_device(device: DeviceScript, state: Dictionary) -> void:
-    var prior_fault := device.fault
+    var previous_fault := device.fault
     device.apply_simulation(state)
     panel.refresh_card(device)
-    report_device(device, prior_fault != device.fault)
+    report_device(device)
+    if state.has("fault") and state.fault != device.fault and (state.fault != "" or previous_fault != ""):
+        panel.form_error("Сначала устраните причину. Активная ошибка: " + device.fault)
+        return
     panel.finish_edit()
     if state.get("power") != device.state.get("power"):
         panel.notice("Физическое ограничение: питание или положение устройства не изменилось.")
 
-func report_device(device: DeviceScript, send_fault := false) -> void:
-    if send_fault:
-        GatewayClient.send_error(device.gateway_node, device.fault, "Падение давления")
+func report_device(device: DeviceScript) -> void:
     GatewayClient.send_state(device.gateway_node, device.get_state())
     var readings := device.telemetry()
     if not readings.is_empty():
@@ -115,7 +117,7 @@ func on_device_changed(device: DeviceScript) -> void:
 func inject_boiler_fault() -> void:
     var boiler: DeviceScript = devices["Kitchen/Boiler"]
     boiler.apply_simulation({"power":"off", "pressure":0.4})
-    report_device(boiler, true)
+    report_device(boiler)
     panel.refresh_card(boiler)
 
 func remove_device(device: DeviceScript) -> void:

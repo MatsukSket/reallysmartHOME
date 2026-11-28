@@ -52,8 +52,9 @@ class BackendForwarder:
         if self._task:
             await self._task
 
-    def submit(self, ev: DeviceEvent) -> None:
-        (self._critical if ev.kind in (EventKind.ERROR, EventKind.DISCOVERY, EventKind.REMOVAL) or ev.cmd_id or 'wet' in ev.payload else self._regular).append(ev)
+    def submit(self, ev: DeviceEvent, *, critical: bool = False) -> None:
+        urgent = critical or ev.kind in (EventKind.ERROR, EventKind.DISCOVERY, EventKind.REMOVAL) or ev.cmd_id or "wet" in ev.payload
+        (self._critical if urgent else self._regular).append(ev)
         self._wake.set()
 
     def _next(self) -> tuple[DeviceEvent, bool] | None:
@@ -131,17 +132,22 @@ class EventPipeline:
                 return
             ev.payload = ok
 
+        previous, _ = self._last.get((ev.device_id, ev.kind), ({}, 0.0))
+        fault_changed = ev.kind is EventKind.STATE and "fault" in ev.payload and (
+            "fault" not in previous or ev.payload["fault"] != previous["fault"]
+        )
         changed = self._dedup(ev)
         if changed is None:
             return
-        ev.payload = changed
-        self._fwd.submit(ev)
+        if not fault_changed:
+            ev.payload = changed
+        self._fwd.submit(ev, critical=fault_changed)
 
     def _dedup(self, ev: DeviceEvent) -> dict | None:
         key = (ev.device_id, ev.kind)
         prev, ts = self._last.get(key, ({}, 0.0))
         now = time.monotonic()
-        changed = {k: v for k, v in ev.payload.items() if not self._same(prev.get(k), v)}
+        changed = {k: v for k, v in ev.payload.items() if k not in prev or not self._same(prev[k], v)}
         if not changed and now - ts < self._heartbeat:
             return None                                    # ничего нового
         self._last[key] = ({**prev, **ev.payload}, now)

@@ -4,6 +4,11 @@ func _ready() -> void:
     var home = preload("res://scenes/home.tscn").instantiate()
     add_child(home)
     await get_tree().process_frame
+    if "--test-faults" in OS.get_cmdline_user_args():
+        check_actuator_faults(home)
+        print("Godot fault controls verified")
+        get_tree().quit()
+        return
     var panel = home.panel
     for tile in panel.grid.get_children():
         assert(tile.size.is_equal_approx(panel.add_tile.size), "Плитки должны быть одинакового размера")
@@ -70,3 +75,32 @@ func set_physical_fields(home: Control, node: String, values: Dictionary) -> voi
             input.button_pressed = values[key]
     panel.dialog.confirmed.emit()
     assert(not panel.dialog.visible)
+
+func check_actuator_faults(home: Control) -> void:
+    var panel = home.panel
+    for node in ["Kitchen/Boiler", "Living/AC", "Bath/WaterValve", "Spare/Lamp"]:
+        var device = home.devices[node]
+        panel.cards[node].tile.pressed.emit()
+        var errors: OptionButton = panel.form.find_child("fault_options", true, false)
+        assert(errors != null and errors.item_count == 3 and errors.get_item_text(0) == "Нет ошибки")
+        errors.select(1)
+        panel.dialog.confirmed.emit()
+        assert(not device.fault.is_empty() and device.get_state().fault == device.fault)
+        assert(not device.apply_command("set_state", {"power": "on"}).ok)
+        panel.cards[node].tile.pressed.emit()
+        errors = panel.form.find_child("fault_options", true, false)
+        errors.select(0)
+        panel.dialog.confirmed.emit()
+        assert(device.fault.is_empty() and device.get_state().fault == null)
+    for node in ["Bath/LeakSensor", "Living/Thermometer"]:
+        panel.cards[node].tile.pressed.emit()
+        assert(panel.form.find_child("fault_options", true, false) == null)
+        panel.finish_edit()
+    home.inject_boiler_fault()
+    var boiler = home.devices["Kitchen/Boiler"]
+    boiler.apply_simulation({"fault": ""})
+    assert(boiler.fault == "E04")
+    boiler.apply_simulation({"pressure": 1.4})
+    assert(boiler.fault == "E04")
+    boiler.apply_simulation({"fault": ""})
+    assert(boiler.fault.is_empty())

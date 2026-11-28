@@ -223,24 +223,20 @@ function paintDevice(){
  $('d-ctl').replaceChildren(...Object.entries(d.state).map(([k,v])=>el('p',(labels[k]||k)+' · '+(v===true?'да':v===false?'нет':v??'—'))),el('small',d.updated_at?new Date(d.updated_at).toLocaleString()+(d.stale?' · устарело':''):'Ожидание показаний'));
  if(d.lock)$('d-ctl').append(btn('Вернуть автоматику',async()=>{await api('devices/'+d.id+'/release-lock',{});await update()}));
  const valve=d.kind==='leak_protection', toggle=$('d-toggle');
- const boilerFault = d.kind === 'boiler' && Boolean(d.error);
+ const faultBlocksToggle = Boolean(d.error) && !(valve && d.on && d.error === 'E22');
  const leak = DEV.find(device => device.kind === 'sensor_leak');
  const unsafeToOpen = valve && !d.on && (!leak || leak.stale || leak.state.value !== false);
  const warning = $('d-warning');
- warning.textContent = boilerFault
-   ? 'Котёл заблокирован. Ошибка ' + d.error + '. Устраните причину в симуляторе и сбросьте ошибку.'
+ warning.textContent = d.error
+   ? 'Ошибка ' + d.error + '. Устраните причину в Godot и выберите «Нет ошибки».'
    : unsafeToOpen
      ? (leak?.stale || !leak ? 'Открытие клапана заблокировано. Нет свежих показаний датчика протечки.' : 'Открытие клапана заблокировано. Датчик фиксирует протечку.')
      : '';
  warning.hidden = !warning.textContent;
- const reset = $('d-reset');
- reset.hidden = !boilerFault;
- reset.disabled = deviceActionInFlight;
- reset.onclick = () => runDeviceAction(d, 'reset_error');
- toggle.disabled = deviceActionInFlight || boilerFault || unsafeToOpen;
+ toggle.disabled = deviceActionInFlight || faultBlocksToggle || unsafeToOpen;
  $('d-disconnect').disabled = deviceActionInFlight;
  for (const control of $('d-settings').querySelectorAll('input, select, button')) {
-   control.disabled = deviceActionInFlight || boilerFault;
+   control.disabled = deviceActionInFlight || Boolean(d.error);
  }
  toggle.hidden=!valve && !['conditioner','boiler','light'].includes(d.kind);
  toggle.className='btn btn-acc w-full mt-6 rounded-2xl py-3.5';
@@ -271,7 +267,11 @@ async function update(){
  renderMap();renderHome();renderRoom();paintDevice();
  $('rules').replaceChildren(...h.schedules.map(s=>btn(s.at+' UTC · '+s.operation+' · убрать',async()=>{await api('schedules/'+s.id,null,'DELETE');await update()})),...h.rooms.flatMap(r=>r.targets.map(t=>btn(r.name+' · '+t.value+' °C · убрать',async()=>{await api('targets/'+r.id+'/'+t.parameter,null,'DELETE');await update()}))));
 
- const events = h.history.slice(-8).map(e => ({at: e.time, parts: [e.device_id, e.code || e.kind], event: e}));
+ const events = h.history.slice(-8).map(e => ({
+   at: e.time,
+   parts: [e.device_id, e.kind === 'error_cleared' ? 'Ошибка снята · ' + e.code : e.code || e.kind],
+   event: e,
+ }));
  events.push(...j.records.map(e => ({at: e.at, parts: [e.subject, e.action, e.status, e.reason]})));
  $('audit').replaceChildren(...events.map(({at, parts, event}) => {
    const row = el('div', parts.filter(Boolean).join(' · '));
@@ -364,11 +364,7 @@ $('confirm').onclick = async () => {
  $('answer').textContent = 'Ожидаю подтверждение от устройства…';
  try {
    const response = await api('chat/confirm/' + encodeURIComponent(confirmation), {});
-   const execution = response.results
-     ? response.results.map(item => item.operation + ' · ' + commandStatus(item)).join('\n')
-     : commandStatus(response);
-   $('answer').textContent = explanation + '\n' + execution +
-     (response.skipped ? '\nПропущено действий: ' + response.skipped : '');
+   $('answer').textContent = explanation + '\n' + commandStatus(response);
  } catch (error) {
    $('answer').textContent = error.message;
  } finally {

@@ -487,6 +487,7 @@ class Event:
     command_id: Optional[str] = None
     event_id: Optional[str] = None
     measurements: Dict[str, Any] = field(default_factory=dict)
+    fault_reported: bool = False
 
 
 @dataclass

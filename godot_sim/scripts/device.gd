@@ -2,6 +2,11 @@ extends Node
 
 signal changed
 
+const ERROR_CATALOG = preload("res://config/errors.json")
+
+static func error_codes(device_kind: String) -> Dictionary:
+    return ERROR_CATALOG.data.get(device_kind, {})
+
 var gateway_node: String
 var state: Dictionary
 var title: String
@@ -15,6 +20,8 @@ func get_state() -> Dictionary:
     var reported := state.duplicate()
     for key in ["measured_temperature", "hold_temperature", "follow_air", "pressure"]:
         reported.erase(key)
+    if error_codes(kind).size() > 0:
+        reported.fault = fault if not fault.is_empty() else null
     return reported
 
 func telemetry() -> Dictionary:
@@ -31,37 +38,36 @@ func any_sensor_wet() -> bool:
 
 func apply_simulation(params: Dictionary) -> void:
     var values := params.duplicate()
+    var previous_fault := fault
+    var selected_fault: String = values.get("fault", fault)
+    values.erase("fault")
+    fault = selected_fault if error_codes(kind).has(selected_fault) else ""
     if values.has("measured_temperature"):
         temperature = values.measured_temperature
     if kind == "boiler":
         pressure = values.get("pressure", pressure)
         if pressure < 1.0:
             fault = "E04"
-        if not fault.is_empty():
-            values.power = "off"
-    if kind == "light" and not values.get("mains", true):
+    if kind == "light" and not values.get("mains", state.get("mains", true)):
+        fault = "E31"
+    if kind == "water_valve" and values.get("jammed", state.get("jammed", false)):
+        fault = "E21"
+    if kind in ["boiler", "air_conditioner", "light"] and not fault.is_empty():
         values.power = "off"
-    if kind == "water_valve" and (values.get("jammed", false)
-            or (values.get("power") == "on" and any_sensor_wet())):
+    if kind == "water_valve" and (fault == "E21"
+            or (values.get("power") == "on" and (fault == "E22" or any_sensor_wet()))):
         values.power = state.get("power", "off")
-    set_local_state(values)
+    set_local_state(values, previous_fault != fault)
 
 func announce() -> void:
     if virtual_id:
         GatewayClient.discover_device(virtual_id, gateway_node, kind, title)
 
 func apply_command(action: String, params: Dictionary) -> Dictionary:
-    if action != "set_state" or kind in ["leak_sensor", "temperature_sensor"]:
+    if action != "set_state" or kind in ["leak_sensor", "temperature_sensor"] or params.has("reset_error"):
         return {"ok": false, "error": "Операция недоступна для этого устройства"}
-    if kind == "boiler":
-        if params.get("reset_error", false):
-            if pressure < 1.0:
-                return {"ok": false, "error": "Давление в контуре ещё не восстановлено"}
-            fault = ""
-            changed.emit()
-            return {"ok": true}
-        if not fault.is_empty():
-            return {"ok": false, "error": "Котёл заблокирован: " + fault}
+    if not fault.is_empty() and not (kind == "water_valve" and fault == "E22" and params.get("power") == "off"):
+        return {"ok": false, "error": "Устройство заблокировано: " + fault}
     if kind == "light" and params.get("power") == "on" and not state.get("mains", true):
         return {"ok": false, "error": "На лампу не подаётся питание"}
     if kind == "water_valve":
@@ -72,7 +78,7 @@ func apply_command(action: String, params: Dictionary) -> Dictionary:
     set_local_state(params)
     return {"ok": true}
 
-func set_local_state(params: Dictionary) -> void:
-    if params.keys().any(func(key): return state.get(key) != params[key]):
+func set_local_state(params: Dictionary, fault_changed := false) -> void:
+    if fault_changed or params.keys().any(func(key): return state.get(key) != params[key]):
         state.merge(params, true)
         changed.emit()

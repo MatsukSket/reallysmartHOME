@@ -106,6 +106,3 @@ func _resend_full_state() -> void:
 			if dev.has_method("announce"):
 				dev.announce()
 			send_state(dev.get("gateway_node"), dev.get_state())
-			var fault = dev.get("fault")
-			if fault is String and not fault.is_empty():
-				send_error(dev.get("gateway_node"), fault)

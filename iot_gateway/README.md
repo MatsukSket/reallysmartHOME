@@ -17,12 +17,16 @@ Backend ◄──POST events────  BackendForwarder ◄─ EventPipeline(
 DEMO_UI=1 BACKEND_EVENTS_URL=http://127.0.0.1:9000/api/gateway/events \
   python -m uvicorn gateway.app:app --port 9000
 
-# 2. эмулятор Godot: e + Enter = ошибка E04 на котле, l + Enter = протечка
+# 2. эмулятор Godot
 python tools/fake_godot.py
 ```
 Затем откройте в браузере http://localhost:9000/ui
 
 На панели: карточки устройств с живой телеметрией, журнал событий и квитанций, форма команд.
+В Godot откройте плитку исполнительного прибора и используйте поле «Ошибка». Чтобы снять ошибку, устраните причину, выберите «Нет ошибки» и сохраните.
+
+В консольном эмуляторе введите нужный код и нажмите Enter. Для E04 сначала введите «r», чтобы восстановить давление, затем «c», чтобы снять ошибку. Для других приборов доступны «clear ac», «clear valve» и «clear lamp». Команды «l» и «d» меняют показание датчика протечки.
+
 Попробуйте `target_temp = 500` — шлюз ответит `rejected`; остановите эмулятор и отправьте команду — `unavailable`.
 
 При общем запуске `BACKEND_EVENTS_URL` указывает на FastAPI, сервисы используют общий `GATEWAY_TOKEN`, а панель показывает диагностику. Для автономной проверки без служебного токена на панели доступны формы команд.
@@ -32,6 +36,7 @@ python tools/fake_godot.py
 * Шлюз → бэкенд: `POST BACKEND_EVENTS_URL`, тело `DeviceEvent`
   `{"event_id","device_id":123,"kind":"telemetry|state|error|discovery|removal","ts","payload":{...},"source":"godot"}`
   (временные сбои приводят к повторной доставке критичных событий).
+  Исполнительные устройства передают в событии состояния поле fault. Код обозначает активную ошибку, а null означает отсутствие ошибки. Изменение поля доставляется как критичное событие.
 * Бэкенд → шлюз: `POST /commands` `{"commands":[{"device_id":123,"command":"set_state","params":{"power":"on","target_temp":60}}]}`
   → `{"results":[{"cmd_id","device_id","status":"confirmed|rejected|timeout|unavailable|failed","detail"}]}`
 

@@ -10,15 +10,15 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..auth import ROLE_ADMIN
-from ..domain import Command, CommandResult, STATUS_DONE, STATUS_NOT_REQUIRED
+from ..domain import Command, CommandResult
 from ..solver.commands import prepare as check_command
 from ..rag.assistant import Ollama
 from ..rag.indexer import create_index, passages
 from ..rag.retriever import Knowledge
-from .context import ACTION_CLAIM, CLIMATE, allowed_actions, collect_topics, search_topics, snapshot
+from .context import ACTION_CLAIM, device_status, manual_passages
 from .intent import (
-    ACTION, CODES, COMPLEX, DIAGNOSTIC, NUMBERS, READING, SETTING_OPERATIONS,
-    UNKNOWN_ROOM, local_operation, mode_value, reference,
+    ACTION, CODES, COMPLEX, DIAGNOSTIC, NUMBERS, READING, SETTING_OPERATIONS, STATE,
+    UNKNOWN_ROOM, local_operation, mode_value, reference, unknown_reading_room,
 )
 
 log = logging.getLogger(__name__)
@@ -60,15 +60,15 @@ class Chat:
             operation = local_operation(permission[1], verb["verb"]) if verb else None
             if operation in ("turn_on", "turn_off", "open_water", "close_water"):
                 return self.check_permission(text, ref, devices, session, operation)
-        if CLIMATE.search(text) and (CODES.search(text) or not ACTION.match(text)):
-            return self.explain(message, text, ref, devices, rooms, session)
         action = ACTION.match(text)
         if action and not message.rstrip().endswith("?"):
             return self.command(text, action["verb"], ref, devices, session)
-        if (not CODES.search(text) and not DIAGNOSTIC.search(text) and "как " not in text
-                and READING.search(text) and re.search(r"температур|градус", text)):
-            return self.read_temperature(text, ref, devices)
-        return self.explain(message, text, ref, devices, rooms, session)
+        if not CODES.search(text) and not text.startswith(("как ", "почему ", "зачем ", "что означает ")):
+            if READING.search(text) and re.search(r"температур|градус", text):
+                return self.read_temperature(text, ref, devices)
+            if STATE.search(text) or re.search(r"^есть ли протечк", text):
+                return self.read_status(text, ref, devices)
+        return self.explain(message, text, ref, devices, session)
 
     def candidates(self, ref, devices):
         candidates = ref.devices or tuple(device for device in devices if device.type in ref.types)
@@ -92,19 +92,9 @@ class Chat:
                 room_names = {room.id: room.name for room in self.solver.storage.rooms()}
             details = ", ".join(f"{d.name} ({room_names.get(d.room_id, d.room_id)})" for d in candidates[:6])
             return self.reply(f"Какой прибор выбрать? {details}", "clarify")
-        candidate = candidates[0]
-
-        if operation is None and self.model:
-            try:
-                proposal = self.model.interpret(text, candidate)
-            except Exception as exc:
-                log.warning("Ошибка разбора запроса: %s", type(exc).__name__)
-                return self.reply("Модель недоступна или вернула некорректный разбор.", "degraded")
-            if proposal.intent == "command" and proposal.operation != "none" and proposal.device_id == candidate.id:
-                operation = proposal.operation
-                # Model guesses remain proposals until explicitly accepted.
-                return self.prepare(candidate, operation, text, session, require_confirmation=True)
-        return self.prepare(candidate, operation, text, session)
+        if operation is None:
+            return self.reply("Укажи конкретную поддерживаемую операцию для прибора.", "clarify")
+        return self.prepare(candidates[0], operation, text, session)
 
     def check_permission(self, text, ref, devices, session, operation):
         candidates = self.candidates(ref, devices)
@@ -117,7 +107,7 @@ class Chat:
             return self.reply(check.reason or check.status)
         return self.reply("Текущие данные допускают действие. Для выполнения отправь явную команду.")
 
-    def prepare(self, device, operation, text, session, require_confirmation=False):
+    def prepare(self, device, operation, text, session):
         numbers = NUMBERS.findall(text)
         params = {}
         if operation == "set_value":
@@ -147,18 +137,14 @@ class Chat:
             return self.reply("Нет свежего состояния устройства.", "degraded")
 
         command = Command(device.id, operation, params=params, source="assistant", actor=session.username)
-        if device.type == "leak_protection" or require_confirmation:
-            label = {
-                "open_water": "открыть воду", "close_water": "перекрыть воду",
-                "turn_on": "включить", "turn_off": "выключить", "set_mode": "сменить режим",
-            }.get(operation, "изменить уставку")
-            value = f" → {params['value']}" if params else ""
+        if operation in ("open_water", "close_water"):
+            label = "открыть воду" if operation == "open_water" else "перекрыть воду"
             key = secrets.token_urlsafe(24)
             now = time.monotonic()
             with self.lock:
                 self.confirmations = {k: item for k, item in self.confirmations.items() if item[0] > now}
-                self.confirmations[key] = (now + 60, session.username, session.role, (command,), {})
-            return self.reply(f"Подтверди действие: {label} · {device.name}{value}.", "confirm", confirmation=key)
+                self.confirmations[key] = (now + 60, session.username, session.role, command)
+            return self.reply(f"Подтверди действие: {label} · {device.name}.", "confirm", confirmation=key)
         return self.reply("Результат команды", "action", result=self.describe(self.solver.execute(command)))
 
     def confirm(self, key, session):
@@ -167,42 +153,17 @@ class Chat:
             if not item or item[1:3] != (session.username, session.role):
                 raise HTTPException(403, "Подтверждение недоступно")
             self.confirmations.pop(key)
-        deadline, _, _, commands, climate_rooms = item
+        deadline, _, _, command = item
         if time.monotonic() >= deadline:
             raise HTTPException(410, "Подтверждение истекло")
         with self.solver._guard:
-            for command in commands:
-                device = self.solver.storage.device(command.device_id)
-                if device is None or not device.connected or not self.solver.is_fresh(device):
-                    raise HTTPException(409, "Устройство отключено или состояние устарело")
-                if climate_rooms and device.room_id != climate_rooms.get(device.id):
-                    raise HTTPException(409, "Комната устройства изменилась")
-                if climate_rooms and not self.climate_readings_are_fresh(device.room_id):
-                    raise HTTPException(409, "Нет свежих показаний температуры в комнате")
-                if climate_rooms:
-                    check = check_command(self.solver, command)
-                    if isinstance(check, CommandResult) and check.status != STATUS_NOT_REQUIRED:
-                        raise HTTPException(409, check.reason or check.status)
-        if not climate_rooms:
-            return self.describe(self.solver.execute(commands[0]))
-        results = []
-        for command in commands:
-            result = self.describe(self.solver.execute(command))
-            results.append({"operation": command.operation, **result})
-            if result["status"] not in (STATUS_DONE, STATUS_NOT_REQUIRED):
-                break
-        completed = len(results) == len(commands) and results[-1]["status"] in (STATUS_DONE, STATUS_NOT_REQUIRED)
-        return {"status": STATUS_DONE if completed else results[-1]["status"],
-                "reason": None if completed else results[-1]["reason"], "results": results,
-                "skipped": len(commands) - len(results)}
-
-    def climate_readings_are_fresh(self, room_id):
-        sensors = [d for d in self.solver.storage.devices(room_id)
-                   if d.connected and d.type == "sensor_temperature"]
-        return bool(sensors) and all(self.solver.is_fresh(d) and d.state.get("value") is not None for d in sensors)
+            device = self.solver.storage.device(command.device_id)
+            if device is None or not device.connected or not self.solver.is_fresh(device):
+                raise HTTPException(409, "Устройство отключено или состояние устарело")
+        return self.describe(self.solver.execute(command))
 
     def read_temperature(self, text, ref, devices):
-        if len(ref.rooms) > 1:
+        if len(ref.rooms) > 1 or unknown_reading_room(text, ref):
             return self.reply("Уточни комнату.", "clarify")
         if ref.devices or any(kind in ref.types for kind in ("boiler", "conditioner", "sensor_temperature")):
             candidates = self.candidates(ref, devices)
@@ -222,161 +183,75 @@ class Chat:
                 return self.reply(f"{device.name}: {value} °C.")
         return self.reply("Нет актуальных показаний температуры.", "degraded")
 
-    def explain(self, message, text, ref, devices, rooms, session):
-        connected = [d for d in devices if d.connected]
-        if ref.rooms:
-            connected = [d for d in connected if any(room.id == d.room_id for room in ref.rooms)]
-        named = self.candidates(ref, connected)
-        climate = bool(CLIMATE.search(text))
-        if not climate and not CODES.search(text) and DIAGNOSTIC.search(text) and len(named) > 1:
-            return self.reply("Уточни, какой прибор нужно проверить.", "clarify")
-        if ref.devices:
-            connected = [d for d in connected if d in ref.devices or climate and d.type in ("conditioner", "sensor_temperature")]
-        topics, climate = collect_topics(text, ref, connected, self.solver.is_fresh)
+    def read_status(self, text, ref, devices):
+        if len(ref.rooms) > 1 or unknown_reading_room(text, ref):
+            return self.reply("Уточни одну комнату.", "clarify")
+        specific = bool(ref.devices or ref.types)
+        if specific:
+            devices = self.candidates(ref, devices)
+            if len(devices) > 1:
+                return self.reply("Уточни название прибора или комнату.", "clarify")
+        else:
+            devices = [d for d in devices if d.connected and (not ref.rooms or d.room_id == ref.rooms[0].id)]
+        if not devices:
+            return self.reply("Подключённые приборы для запроса не найдены.", "no_source")
+        lines = []
+        for device in devices:
+            detail = device_status(device) if self.solver.is_fresh(device) else "нет свежих данных"
+            lines.append(f"{device.name}: {detail}.")
+        return self.reply("\n".join(lines))
+
+    def explain(self, message, text, ref, devices, session):
+        named = self.candidates(ref, devices)
+        kinds = {d.type for d in ref.devices} or set(ref.types)
+        codes = {code.upper() for code in CODES.findall(text)}
+        if len(kinds) > 1 or len(codes) > 1:
+            return self.reply("Задай отдельный вопрос об одном приборе или коде ошибки.", "clarify")
+        kind = next(iter(kinds), None)
+        code = next(iter(codes), None)
+        if not code and DIAGNOSTIC.search(text):
+            if len(named) > 1:
+                return self.reply("Уточни, о каком приборе спрашиваешь.", "clarify")
+            if named and self.solver.is_fresh(named[0]) and CODES.fullmatch(named[0].error or ""):
+                code = named[0].error.upper()
+        models = {device.model for device in named if device.model}
+        model = next(iter(models)) if len(models) == 1 else None
+
         impact = self.solver.new_impact_id()
         if os.getenv("RAG_TRACE") == "1":
-            log.warning("RAG %s question=%r topics=%r", impact, message, topics)
+            log.warning("RAG %s question=%r type=%r model=%r code=%r", impact, message, kind, model, code)
         try:
-            docs = search_topics(self.knowledge, message, topics)
+            docs = manual_passages(self.knowledge, message, kind=kind, model=model, code=code)
         except Exception as exc:
             log.warning("Ошибка поиска %s: %s", impact, type(exc).__name__)
-            return self.with_facts("Поиск по базе знаний недоступен.", named, "degraded")
+            return self.reply("Поиск по базе знаний недоступен.", "degraded")
         self.solver._log(impact, "RAG", "поиск", status="найдено" if docs else "пусто",
                          reason=", ".join(f"{d['chunk_id']}:{d.get('similarity', 'код/слова')}" for d in docs),
                          actor=session.username)
         if not docs:
-            relevant = named or ([d for d in connected if d.type == "sensor_temperature"] if climate else [])
-            reply = self.with_facts("В базе знаний нет подходящей инструкции.", relevant, "no_source")
-            if self.model and any(self.solver.is_fresh(d) for d in relevant):
-                try:
-                    solution = self.model.synthesize({"question": message, "devices": snapshot(relevant, rooms, self.solver.is_fresh),
-                                                      "documents": [], "knowledge_status": "no_source", "allowed": []})
-                    if solution.commands:
-                        self.reject_proposal(impact, solution.commands[0], session)
-                    elif not ACTION_CLAIM.search(solution.reply):
-                        reply["reply"] += " " + solution.reply
-                except Exception as exc:
-                    log.warning("Ошибка ответа без источников %s: %s", impact, type(exc).__name__)
-            return reply
-        if climate and len([d for d in connected if d.type == "conditioner"]) > 1:
-            return self.reply("Уточни комнату или название кондиционера.", "clarify")
+            return self.reply("В базе знаний нет подходящей инструкции.", "no_source")
 
-        relevant = [d for d in connected if d.type in {topic.kind for topic in topics} or
-                    d.type == "sensor_temperature" and climate or
-                    d.error and any(topic.code == d.error for topic in topics)]
-        discussion_only = re.search(r"\b(не (включа|запуска|трог|надо)|без измен)", text)
-        allowed = allowed_actions(relevant, docs, self.solver.is_fresh) if climate and not discussion_only else []
-        excerpts = [{**d, "text": d["text"].split("Действие:")[0].strip()} if d.get("code") else d for d in docs]
-        codes = {topic.code for topic in topics}
-        simulation_fault = "E04" in codes and hasattr(self.solver.model, "dispatch")
-        proposals = []
-        try:
-            answer = self.explain_passages(excerpts)
-            if self.model:
-                solution = self.model.synthesize({"question": message, "devices": snapshot(relevant, rooms, self.solver.is_fresh),
-                                                  "documents": excerpts, "allowed": allowed})
-                if ACTION_CLAIM.search(solution.reply):
-                    self.solver._log(impact, "RAG", "проверка текста модели", status="заменён выдержками",
-                                     reason="неподтверждённое утверждение о выполнении", actor=session.username)
-                else:
-                    answer = solution.reply
-                proposals = solution.commands
-            elif allowed:
-                from ..schemas.chat import GroundedCommand
-                proposals = [GroundedCommand(**item, value="fan" if item["operation"] == "set_mode" else None)
-                             for item in allowed]
-            if not answer.strip():
-                raise ValueError("Пустой ответ")
-        except Exception as exc:
-            log.warning("Ошибка генерации %s: %s", impact, type(exc).__name__)
-            return self.with_facts("Локальная модель не смогла сформировать ответ.", relevant, "degraded")
-        if self.model and (climate or any(doc.get("advisory") for doc in docs)):
-            diagnoses = {}
-            for doc in excerpts:
-                if doc.get("code"):
-                    key = (doc["code"], doc.get("model") or doc["source"])
-                    diagnoses.setdefault(key, doc["text"])
-            for (_, model), diagnosis in diagnoses.items():
-                if diagnosis not in answer:
-                    answer += f" По руководству {model}: {diagnosis}"
-        if climate and relevant:
-            answer = self.with_facts(answer, relevant, "info")["reply"]
-        if simulation_fault:
-            answer += (" В Godot порог симуляции — 1 бар. Для проверки восстановления задай нормальное "
-                       "давление на плитке котла в Godot, затем сбрось ошибку в карточке котла на сайте.")
-        if any(doc.get("advisory") for doc in docs):
-            models = ", ".join(dict.fromkeys(doc["model"] for doc in docs if doc.get("advisory")))
-            answer += f" Источники для моделей {models} приведены для справки. Применимость к этому прибору не подтверждена."
-
-        extra = self.propose(proposals, allowed, relevant, impact, session)
-        if extra.get("rejected"):
-            answer += " Управляющее предложение отклонено сервером."
-        elif climate and not allowed:
-            answer += " Для автоматического предложения нужны совместимое руководство, выбранный кондиционер и свежие показания."
-        confirmation = extra.get("confirmation")
-        if confirmation:
-            answer += " Предложение к подтверждению: " + extra["proposal_text"] + "."
-        reply = self.reply(answer, "confirm" if confirmation else "info")
-        if confirmation:
-            reply["confirmation"] = confirmation
-        reply["sources"] = [f"{doc['source']}#{doc['chunk_id']}" for doc in docs]
-        reply["source_details"] = [{key: doc.get(key, "") for key in ("source", "section", "chunk_id", "model")} for doc in docs]
-        return reply
-
-    @staticmethod
-    def explain_passages(excerpts):
-        topics = {}
-        for doc in excerpts:
-            key = (doc.get("device_type"), doc.get("code"), doc.get("model"))
-            topics.setdefault(key, doc["text"])
-        return " ".join(topics.values())
-
-    def with_facts(self, text, devices, kind):
-        facts = []
-        for d in devices[:4]:
-            if self.solver.is_fresh(d):
-                if d.error:
-                    facts.append(f"{d.name}: зарегистрирована {d.error}")
-                if d.type == "sensor_temperature" and d.state.get("value") is not None:
-                    facts.append(f"{d.name}: {d.state['value']} °C")
-        return self.reply(text + (" " + "; ".join(facts) + "." if facts else ""), kind)
-
-    def propose(self, proposals, allowed, devices, impact, session):
-        if not proposals:
-            return {}
-        allow = {(item["device_id"], item["operation"], item["source_id"]) for item in allowed}
-        by_id = {d.id: d for d in devices}
-        commands = []
-        labels = []
-        found = set()
-        with self.solver._guard:
-            for proposal in sorted(proposals, key=lambda p: p.operation != "set_mode"):
-                identity = (proposal.device_id, proposal.operation, proposal.source_id)
-                device = by_id.get(proposal.device_id)
-                valid_value = (proposal.value == "fan" if proposal.operation == "set_mode" else proposal.value is None)
-                if identity not in allow or not device or not valid_value or identity[:2] in found:
-                    return self.reject_proposal(impact, proposal, session)
-                found.add(identity[:2])
-                params = {"value": proposal.value} if proposal.value is not None else {}
-                command = Command(device.id, proposal.operation, params=params, source="assistant",
-                                  actor=session.username, impact_id=impact)
-                check = check_command(self.solver, command)
-                if isinstance(check, CommandResult) and check.status != STATUS_NOT_REQUIRED:
-                    return self.reject_proposal(impact, proposal, session)
-                commands.append(command)
-                labels.append(device.name + (" — режим вентиляции" if proposal.operation == "set_mode" else " — включить"))
-        key = secrets.token_urlsafe(24)
-        now = time.monotonic()
-        with self.lock:
-            self.confirmations = {k: v for k, v in self.confirmations.items() if v[0] > now}
-            self.confirmations[key] = (now + 60, session.username, session.role, tuple(commands),
-                                       {cmd.device_id: by_id[cmd.device_id].room_id for cmd in commands})
-        return {"confirmation": key, "proposal_text": ", ".join(labels)}
-
-    def reject_proposal(self, impact, proposal, session):
-        self.solver._log(impact, "RAG", "проверка предложения", subject=proposal.device_id,
-                         status="отклонено", reason=proposal.operation, actor=session.username)
-        return {"rejected": True}
+        excerpts = [{key: doc[key] for key in ("source", "section", "text")} for doc in docs]
+        answer = "\n\n".join(doc["text"] for doc in excerpts)
+        status = "info"
+        if self.model:
+            try:
+                generated = self.model.explain(message, excerpts)
+                if ACTION_CLAIM.search(generated):
+                    raise ValueError("Неподтверждённое утверждение о выполнении действия")
+                answer = generated
+            except Exception as exc:
+                log.warning("Ошибка генерации справки %s: %s", impact, type(exc).__name__)
+                status = "degraded"
+                answer = "Локальная модель не смогла сформировать ответ. Выдержки из руководств:\n\n" + answer
+        if model and any(doc.get("model") and doc["model"].casefold() != model.casefold() for doc in docs):
+            answer += "\n\nНайдено руководство другой модели. Применимость к этому прибору не подтверждена."
+        return self.reply(
+            answer, status,
+            sources=[f"{doc['source']}#{doc['chunk_id']}" for doc in docs],
+            source_details=[{key: doc.get(key, "") for key in ("source", "section", "chunk_id", "model")}
+                            for doc in docs],
+        )
 
 
 def install_chat(app, current_session, provider, describe):

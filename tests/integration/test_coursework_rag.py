@@ -1,4 +1,4 @@
-"""Regression tests for the coursework retrieval and grounded-action scenarios."""
+"""Regression checks for read-only reference answers and index updates."""
 import sys
 from types import SimpleNamespace
 
@@ -7,83 +7,47 @@ import pytest
 from test_storage_chat import local
 
 from app.chat.service import Chat
-from app.domain import CommandResult
 from app.rag import indexer
 from app.rag.corpus import CHUNK_SIZE, OVERLAP, parse_manual
-from app.schemas.chat import GroundedCommand, GroundedSolution
+from app.rag.retriever import Knowledge
 
 
-QUESTION = "Котёл выдал E04 и дома душно, что делать?"
-
-
-def prepare_scenario(solver):
-    with solver._guard:
-        for ident in ("boiler", "conditioner_living", "sensor_temperature_living"):
-            device = solver.storage.device(ident)
-            device.received_at = device.last_event_time = solver.clock.now()
-            if ident == "boiler":
-                device.error = "E04"
-            if ident == "sensor_temperature_living":
-                device.state["value"] = 27
-            solver.storage.save_device(device)
-
-
-def test_compound_question_finds_two_sources_and_waits_for_confirmation(local, monkeypatch):
+def test_help_never_offers_a_command_for_another_device(local, monkeypatch):
     client, solver = local
-    prepare_scenario(solver)
-    operations = []
-
-    def execute(command):
-        operations.append(command.operation)
-        return CommandResult("выполнено")
-
-    monkeypatch.setattr(solver, "execute", execute)
-    reply = client.post("/api/chat", json={"message": QUESTION}).raise_for_status().json()
-    assert reply["kind"] == "confirm" and operations == []
-    assert {source.split("#")[0] for source in reply["sources"]} == {"boiler_baxi.md", "conditioner_sim.md"}
-    assert any(item["section"] for item in reply["source_details"])
-    assert "27 °C" in reply["reply"]
-    result = client.post("/api/chat/confirm/" + reply["confirmation"]).raise_for_status().json()
-    assert operations == ["set_mode", "turn_on"]
-    assert result["skipped"] == 0 and len(result["results"]) == 2
-    assert client.post("/api/chat/confirm/" + reply["confirmation"]).status_code == 403
+    monkeypatch.setattr(solver, "execute", lambda *_: pytest.fail("Справочный запрос запустил команду"))
+    reply = client.post("/api/chat", json={"message": "Котёл выдал E04 и дома душно, что делать?"}).raise_for_status().json()
+    assert reply["kind"] == "info"
+    assert "confirmation" not in reply
+    assert {source.split("#")[0] for source in reply["sources"]} == {"boiler_baxi.md"}
+    mixed = client.post("/api/chat", json={
+        "message": "Котёл выдал E04. Предложи переключить кондиционер на вентиляцию.",
+    }).raise_for_status().json()
+    assert mixed["kind"] == "clarify" and "confirmation" not in mixed
 
 
-def test_stale_sensor_and_mismatched_model_block_proposals(local):
+def test_manual_for_another_model_is_marked_as_reference(local, monkeypatch):
     client, solver = local
-    prepare_scenario(solver)
-    proposal = client.post("/api/chat", json={"message": QUESTION}).raise_for_status().json()
-    assert proposal["kind"] == "confirm"
     with solver._guard:
-        sensor = solver.storage.device("sensor_temperature_living")
-        sensor.received_at = sensor.last_event_time = None
-        solver.storage.save_device(sensor)
-    assert client.post("/api/chat/confirm/" + proposal["confirmation"]).status_code == 409
-    assert client.post("/api/chat", json={"message": QUESTION}).json()["kind"] == "info"
-
-    prepare_scenario(solver)
-    with solver._guard:
-        device = solver.storage.device("conditioner_living")
+        device = solver.storage.device("boiler")
         device.model = "Другая модель"
         solver.storage.save_device(device)
-    reply = client.post("/api/chat", json={"message": QUESTION}).raise_for_status().json()
-    assert "не подтверждена" in reply["reply"] and "confirmation" not in reply
+    monkeypatch.setattr(solver, "execute", lambda *_: pytest.fail("Справочный запрос запустил команду"))
+    reply = client.post("/api/chat", json={"message": "Что означает E04 у котла?"}).raise_for_status().json()
+    assert "другой модели" in reply["reply"]
+    assert reply["sources"] and "confirmation" not in reply
 
 
-def test_model_invented_operation_is_audited_and_never_sent(local, monkeypatch):
+def test_false_claim_in_reference_answer_falls_back_to_sources(local, monkeypatch):
     _, solver = local
-    prepare_scenario(solver)
-    chat = Chat(solver, "demo", lambda result: result)
-    chat.model = SimpleNamespace(synthesize=lambda payload: GroundedSolution(reply="Действие уже выполнено.", commands=[
-        GroundedCommand(device_id="boiler", operation="reset_error", value=None, source_id="invented"),
-    ]))
+    chat = Chat(solver, "ollama", lambda result: result)
+    chat.knowledge = Knowledge()
     session = SimpleNamespace(username="admin", role="admin")
-    monkeypatch.setattr(solver, "execute", lambda *_: pytest.fail("Команда модели ушла на исполнение"))
-    reply = chat.answer(QUESTION, session)
-    assert "отклонено" in reply["reply"] and "confirmation" not in reply
+    monkeypatch.setattr(chat.model, "explain", lambda *_: "Действие уже выполнено.")
+    monkeypatch.setattr(solver, "execute", lambda *_: pytest.fail("Справочный запрос запустил команду"))
+    reply = chat.answer("Что означает E04?", session)
+    assert reply["kind"] == "degraded"
     assert "Действие уже выполнено" not in reply["reply"]
-    assert any(item["status"] == "отклонено" and item["reason"] == "reset_error"
-               for item in solver.journal_records())
+    assert "давление" in reply["reply"] and reply["sources"] and "confirmation" not in reply
 
 
 def test_index_keeps_error_metadata_overlap_and_previous_version(tmp_path, monkeypatch):
@@ -109,18 +73,11 @@ def test_index_keeps_error_metadata_overlap_and_previous_version(tmp_path, monke
     assert indexer.active_version().name == version and old.is_dir()
     assert any(chunk["source"] == "checks.md" for chunk in indexer.passages())
 
-def test_synthesis_retries_invalid_json_and_rejects_extra_fields(monkeypatch):
-    import httpx
-    from app.rag.assistant import Ollama
-
-    requests = []
-    contents = iter(['{"reply":"invalid","commands":[],"extra":1}', '{"reply":"Готово","commands":[]}'])
-
-    def post(url, **kwargs):
-        requests.append(kwargs["json"]["messages"][0]["content"])
-        return httpx.Response(200, request=httpx.Request("POST", url),
-                              json={"message": {"content": next(contents)}})
-
-    monkeypatch.setattr(httpx, "post", post)
-    assert Ollama().synthesize({"allowed": []}).commands == []
-    assert len(requests) == 2 and "нарушил схему" in requests[-1]
+def test_missing_manual_does_not_call_ollama(local, monkeypatch):
+    _, solver = local
+    chat = Chat(solver, "ollama", lambda result: result)
+    chat.knowledge = Knowledge()
+    session = SimpleNamespace(username="admin", role="admin")
+    monkeypatch.setattr(chat.model, "explain", lambda *_: pytest.fail("Модель вызвана без источников"))
+    reply = chat.answer("Что означает E99?", session)
+    assert reply["kind"] == "no_source" and reply["sources"] == []

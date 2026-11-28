@@ -119,7 +119,7 @@ def test_loop(house):
     assert failure["status"]=="не подтверждено" and not device(ac)["state"]["power"]
     assert c.get("/api/journal").json()["records"]
 
-def test_compound_executes_through_gateway(house):
+def test_read_state_command_and_manual_are_independent(house):
     client, fake, _, _ = house
     if not fake.stdin:
         pytest.skip("Сценарий запускаемой ошибки для этого теста предусмотрен в эмуляторе")
@@ -134,15 +134,69 @@ def test_compound_executes_through_gateway(house):
     client.headers["Authorization"] = "Bearer " + token
     until(lambda: device("sensor_temperature_living")["updated_at"])
     until(lambda: device("conditioner_living")["updated_at"])
+    state = post("chat", message="Какая температура в гостиной?")
+    assert state["kind"] == "info" and "°C" in state["reply"] and not state["sources"]
+
     fake.stdin.write(b"e\n")
     fake.stdin.flush()
     until(lambda: device("boiler")["error"] == "E04")
-    combined = post("chat", message="Котёл выдал E04 и дома душно, что делать?")
-    assert combined["kind"] == "confirm"
-    assert any("conditioner_sim" in item for item in combined["sources"])
+    help_reply = post("chat", message="Что означает E04?")
+    assert help_reply["kind"] == "info" and "confirmation" not in help_reply
+    assert {source.split("#")[0] for source in help_reply["sources"]} == {"boiler_baxi.md"}
     assert device("conditioner_living")["state"]["power"] is False
-    result = post("chat/confirm/" + combined["confirmation"])
-    assert result["status"] == "выполнено" and result["skipped"] == 0
-    assert device("conditioner_living")["state"]["mode"] == "fan"
-    assert device("conditioner_living")["state"]["power"] is True
+
+    action = post("chat", message="Включи кондиционер в гостиной")
+    assert action["kind"] == "action" and action["result"]["status"] == "выполнено"
+    assert not action["sources"] and device("conditioner_living")["state"]["power"] is True
     assert device("boiler")["error"] == "E04"
+
+
+def test_simulated_faults_use_one_manual_per_device_and_clear_only_locally(house):
+    client, simulator, _, _ = house
+    if not simulator.stdin:
+        pytest.skip("Для ввода кодов используется консольный эмулятор")
+
+    def post(path, **data):
+        return client.post("/api/" + path, json=data).raise_for_status().json()
+
+    def snapshot():
+        return client.get("/api/home").raise_for_status().json()
+
+    def device(ident):
+        return next(item for room in snapshot()["rooms"] for item in room["devices"] if item["id"] == ident)
+
+    def simulate(text):
+        simulator.stdin.write((text + "\n").encode())
+        simulator.stdin.flush()
+
+    token = post("auth/login", username="admin", password="demo-test")["access_token"]
+    client.headers["Authorization"] = "Bearer " + token
+    client.put("/api/devices/light_spare/connection", json={"room_id": "living"}).raise_for_status()
+
+    cases = [
+        ("boiler", "boiler_baxi.md", "clear boiler", "turn_on", ("E04", "E10")),
+        ("conditioner_living", "conditioner_sim.md", "clear ac", "turn_on", ("E11", "E12")),
+        ("leak_protection", "water_valve_sim.md", "clear valve", "open_water", ("E21", "E22")),
+        ("light_spare", "lamp_sim.md", "clear lamp", "turn_on", ("E31", "E32")),
+    ]
+    for ident, source, reset, operation, codes in cases:
+        for code in codes:
+            simulate(code)
+            until(lambda: device(ident)["error"] == code)
+            denied = post("commands", device_id=ident, operation=operation)
+            assert denied["status"] == "отклонено" and code in denied["reason"]
+            answer = post("chat", message=f"Что означает {code}?")
+            assert {item.split("#")[0] for item in answer["sources"]} == {source}
+            assert "confirmation" not in answer
+            if code == "E04":
+                assert "только в симуляторе" in post("commands", device_id=ident, operation="reset_error")["reason"]
+                until(lambda: device(ident)["state"].get("pressure") == 0.4)
+                simulate("r")
+                until(lambda: device(ident)["state"].get("pressure") == 1.4)
+                assert device(ident)["error"] == code
+            if code == "E22":
+                assert post("commands", device_id=ident, operation="close_water")["status"] == "выполнено"
+            simulate(reset)
+            until(lambda: device(ident)["error"] is None)
+            assert any(event["kind"] == "error_cleared" and event["code"] == code
+                       for event in snapshot()["history"])

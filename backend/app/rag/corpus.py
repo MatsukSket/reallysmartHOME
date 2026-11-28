@@ -51,12 +51,6 @@ def parse_manual(name, raw):
     keys = ("device_type", "model", "category")
     if any(not isinstance(meta.get(key, ""), str) or len(meta.get(key, "")) > 120 for key in keys):
         raise ValueError(f"{name}: недопустимые метаданные")
-    operations = meta.get("operations", [])
-    if not isinstance(operations, list) or any(
-        not isinstance(op, str) or not re.fullmatch(r"[a-z_]{1,50}", op) for op in operations
-    ):
-        raise ValueError(f"{name}: operations должен содержать имена операций")
-
     headings = list(HEADING.finditer(text))
     sections = [(Path(name).stem, text[:headings[0].start()] if headings else text)]
     for index, heading in enumerate(headings):
@@ -77,7 +71,7 @@ def parse_manual(name, raw):
             for chunk in windows(cleaned):
                 chunks.append({
                     "chunk_id": f"{Path(name).stem}-{len(chunks)}", "source": name, "section": section,
-                    "text": chunk, "code": code, "operations": ",".join(operations),
+                    "text": chunk, "code": code,
                     **{key: meta.get(key, "").strip() for key in keys},
                 })
     if not chunks:

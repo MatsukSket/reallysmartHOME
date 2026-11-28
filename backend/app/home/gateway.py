@@ -15,6 +15,12 @@ DISCOVERY_TYPES = {
     "leak_sensor": "sensor_leak", "light": "light", "temperature_sensor": "sensor_temperature",
 }
 STATIC_TYPES = {123: "boiler", 124: "conditioner", 125: "leak_protection", 126: "sensor_leak", 127: "light", 128: "sensor_temperature"}
+FAULT_CODES = {
+    DISCOVERY_TYPES[kind]: frozenset(codes)
+    for kind, codes in json.loads(
+        (Path(__file__).resolve().parents[3] / "godot_sim/config/errors.json").read_text(encoding="utf-8")
+    ).items()
+}
 
 
 def discovered_device(ident, payload):
@@ -25,7 +31,7 @@ def discovered_device(ident, payload):
     if not isinstance(name, str) or not name.strip() or len(name) > 60:
         raise ValueError("Некорректное название устройства")
     return Device(id=f"sim_{ident}", name=name.strip(), type=DISCOVERY_TYPES[kind],
-                  room_id="", connected=False, model="Godot AC" if kind == "air_conditioner" else "")
+                  room_id="", connected=False, model={"boiler": "Baxi Eco 4s", "air_conditioner": "Godot AC"}.get(kind, ""))
 
 
 def simulation_house(house):
@@ -52,9 +58,7 @@ class GatewayHome:
     def dispatch(self, command, cmd_id):
         device = self.storage.device(command.device_id)
         params = device.spec.operation(command.operation).desired(command.params)
-        if command.operation == "reset_error" and device.type == "boiler":
-            params = {"reset_error": True}
-        elif set(params) == {"water"}:
+        if set(params) == {"water"}:
             params = {"power": "on" if params["water"] == "open" else "off"}
         elif set(params) == {"power"}:
             params = {"power": "on" if params["power"] else "off"}
@@ -105,4 +109,11 @@ def normalize(wire, device=None):
         if key in data:
             changes["coolant_temperature" if kind=="boiler" and key=="target_temp" else key]=data[key]
     if kind=="sensor_leak": return None
-    return Event(kind="state",value=changes,**kwargs) if changes else None
+    fault_reported = wire.kind == "state" and "fault" in data
+    fault = data.get("fault") if fault_reported else None
+    if fault_reported and (kind not in FAULT_CODES or (
+            fault is not None and (not isinstance(fault, str) or fault not in FAULT_CODES[kind]))):
+        raise ValueError("fault")
+    if changes or fault_reported:
+        return Event(kind="state", value=changes, code=fault, fault_reported=fault_reported, **kwargs)
+    return None

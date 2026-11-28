@@ -57,7 +57,10 @@ def prepare(
     if not device.connected:
         return reject("устройство отключено от умного дома")
 
-    if hasattr(solver.model, "dispatch") and not solver.is_fresh(device):
+    simulated = hasattr(solver.model, "dispatch")
+    if simulated and command.operation == "reset_error":
+        return reject("сброс ошибки доступен только в симуляторе")
+    if simulated and not solver.is_fresh(device):
         # Закрытие аварийного клапана допускается и при потере его телеметрии.
         if command.operation != "close_water":
             return reject("нет актуального состояния устройства")
@@ -74,12 +77,15 @@ def prepare(
         return reject(problem)
 
     # 4. Устройство не находится в неисправимой ошибке.
-    if device.error is not None and device.spec.error_requires_reset:
-        if not spec.requires_error:
+    if simulated and device.error is not None:
+        if not (device.type == "leak_protection" and device.error == "E22" and command.operation == "close_water"):
             return reject(
                 f"Устройство заблокировано из-за ошибки {device.error}. "
-                "После устранения причины требуется сброс. Нажмите «Сбросить ошибку» в карточке."
+                "После устранения причины выберите «Нет ошибки» в симуляторе."
             )
+    elif device.error is not None and device.spec.error_requires_reset:
+        if not spec.requires_error:
+            return reject(f"Устройство заблокировано из-за ошибки {device.error}. После устранения причины требуется сброс.")
 
     # 5. Операция, допустимая только при ошибке.
     if spec.requires_error and device.error is None:

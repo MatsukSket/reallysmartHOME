@@ -1,5 +1,5 @@
 ---
-category: manual
+category: guide
 ---
 # Автоматизация виртуального дома
 

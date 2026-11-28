@@ -5,8 +5,7 @@
       "native": {"godot": "Kitchen/Boiler", "zigbee2mqtt": "boiler"},
       "commands": {"set_state": {
         "power": {"enum": ["on", "off"]},
-        "target_temp": {"min": 30, "max": 80},
-        "reset_error": {"enum": [true]}
+        "target_temp": {"min": 30, "max": 80}
       }},
       "telemetry_ranges": {"temperature": [-40, 120], "pressure": [0, 6]}
     },

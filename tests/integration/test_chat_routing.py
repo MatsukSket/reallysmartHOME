@@ -1,13 +1,15 @@
 """Regression cases for the boundary between search, interpretation and execution."""
 import sys
+import time
 from types import SimpleNamespace
+
+import pytest
 
 from test_storage_chat import local
 
 from app.domain import CommandResult, Device
 from app.rag import retriever
 from app.chat.service import Chat
-from app.chat.intent import IntentProposal
 
 
 def test_active_error_does_not_leak_into_other_questions(local, monkeypatch):
@@ -39,7 +41,7 @@ def test_active_error_does_not_leak_into_other_questions(local, monkeypatch):
     assert ask("Почему котёл не включается?")["sources"][0].startswith("boiler_baxi.md#")
     boiler_help = ask("Что означает E04?")
     assert boiler_help["sources"][0].startswith("boiler_baxi.md#")
-    assert "порог симуляции" in boiler_help["reply"] and "кран подпитки" not in boiler_help["reply"]
+    assert "1,0 бар" in boiler_help["reply"] and "кран подпитки" not in boiler_help["reply"]
     assert ask("Что означает E99?")["kind"] == "no_source"
 
 
@@ -73,6 +75,9 @@ def test_resolves_commands_without_search_and_rejects_unsafe_ambiguity(local, mo
     assert ask("Переведи кондиционер в режим вентиляции")["kind"] == "action"
     assert executed[-1].operation == "set_mode" and executed[-1].params == {"value": "fan"}
     assert ask("Сколько градусов в гостиной?")["kind"] == "info"
+    assert "Кондиционер в гостиной: питание выключено" in ask("Какое состояние дома?")["reply"]
+    assert "Кондиционер в гостиной" in ask("Какое состояние устройств в доме?")["reply"]
+    assert "питание выключено" in ask("Кондиционер включён?")["reply"]
     assert ask("Установи котлу 90 градусов")["kind"] == "rejected"
     assert ask("Установи текущую температуру котла 45")["kind"] == "clarify"
     assert ask("Включи котёл в подвале")["kind"] == "clarify"
@@ -101,7 +106,30 @@ def test_resolves_commands_without_search_and_rejects_unsafe_ambiguity(local, mo
     assert len(executed) == 3
 
 
-def test_ollama_proposal_requires_confirmation_and_cannot_change_target(local, monkeypatch):
+def test_reads_actual_boiler_pressure_and_water_temperature(local, monkeypatch):
+    client, solver = local
+    monkeypatch.setattr(retriever.Knowledge, "search", lambda *_a, **_kw: pytest.fail("Показание взято из справки"))
+    monkeypatch.setattr(solver, "execute", lambda *_: pytest.fail("Вопрос запустил команду"))
+
+    def ask(message):
+        return client.post("/api/chat", json={"message": message}).raise_for_status().json()
+
+    assert ask("Какая температура воды в котле?")["kind"] == "degraded"
+    response = client.post(
+        "/api/gateway/events", headers={"X-Gateway-Token": "service-test"},
+        json={"device_id": 123, "event_id": "boiler-readings", "source": "godot", "kind": "telemetry",
+              "ts": time.time(), "payload": {"pressure": 1.7, "temperature": 47.5}},
+    ).raise_for_status()
+    assert response.json()["accepted"]
+    for message in ("Какое давление у котла?", "Какое давление в котле?"):
+        reply = ask(message)
+        assert "1.7 бар" in reply["reply"] and not reply["sources"]
+    reply = ask("Какая температура воды в котле?")
+    assert "47.5 °C" in reply["reply"] and not reply["sources"]
+    assert ask("Какая температура воды в котле в подвале?")["kind"] == "clarify"
+
+
+def test_explicit_and_unclear_commands_do_not_use_ollama(local, monkeypatch):
     _, solver = local
     with solver._guard:
         target = solver.storage.device("conditioner_living")
@@ -109,14 +137,14 @@ def test_ollama_proposal_requires_confirmation_and_cannot_change_target(local, m
         solver.storage.save_device(target)
     chat = Chat(solver, "ollama", lambda result: result)
     session = SimpleNamespace(username="resident", role="resident")
-    monkeypatch.setattr(chat.model, "interpret", lambda *_: IntentProposal(
-        intent="command", operation="turn_on", device_id="boiler"))
-    assert chat.answer("Запусти кондиционер", session)["kind"] == "rejected"
-    monkeypatch.setattr(chat.model, "interpret", lambda *_: IntentProposal(
-        intent="command", operation="turn_on", device_id="conditioner_living"))
-    response = chat.answer("Запусти кондиционер", session)
-    assert response["kind"] == "confirm" and response["confirmation"]
-    assert solver.storage.device("conditioner_living").state["power"] is False
+    monkeypatch.setattr(chat.model, "explain", lambda *_: pytest.fail("Для команды вызвана модель"))
+    executed = []
+    monkeypatch.setattr(solver, "execute", lambda command: executed.append(command))
+    assert chat.answer("Запусти кондиционер", session)["kind"] == "action"
+    assert [(command.device_id, command.operation) for command in executed] == [("conditioner_living", "turn_on")]
+    assert chat.answer("Настрой кондиционер", session)["kind"] == "clarify"
+    assert chat.answer("Запусти режим вентиляции кондиционера", session)["kind"] == "action"
+    assert [(command.operation, command.params) for command in executed] == [("turn_on", {}), ("set_mode", {"value": "fan"})]
 
 
 def test_vector_threshold_and_metadata_lookup(tmp_path, monkeypatch):

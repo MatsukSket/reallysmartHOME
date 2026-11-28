@@ -87,12 +87,18 @@ def accept(solver: "Solver", event: Event) -> List[Message]:
     if not event.event_id and storage.history_contains(device.id, event.kind, moment, event.command_id):
         return messages
 
+    history_kind, history_code = event.kind, event.code
+    if event.fault_reported:
+        history_code = None
+        if (device.last_event_time is None or moment >= device.last_event_time) and event.code != device.error:
+            history_kind = "error" if event.code is not None else "error_cleared"
+            history_code = event.code or device.error
     storage.append_history(
         {
             "device_id": device.id,
-            "kind": event.kind,
+            "kind": history_kind,
             "value": event.value,
-            "code": event.code,
+            "code": history_code,
             "time": moment,
             "received_at": received_at,
             "command_id": event.command_id,
@@ -209,11 +215,17 @@ def apply_state(
     device.state.update(changes)
     device.last_event_time = moment
     device.received_at = received_at
-    clear_error_if_needed(device)
+    previous_error = device.error
+    if event.fault_reported:
+        device.error = event.code
+    elif not hasattr(solver.model, "dispatch"):
+        clear_error_if_needed(device)
     solver.storage.save_device(device)
 
     messages: List[Message] = []
     messages.extend(confirm_pending(solver, device, changes, event))
+    if event.fault_reported and device.error is not None and previous_error != device.error:
+        messages.append((bus.DEVICE_ERROR, {"device_id": device.id, "code": device.error, "room_id": device.room_id}))
     messages.append(
         (
             bus.STATE_CHANGED,

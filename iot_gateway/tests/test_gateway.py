@@ -167,6 +167,22 @@ async def test_errors_survive_backend_outage():
         await ws.close()
 
 
+async def test_fault_and_clear_in_state_survive_backend_outage():
+    async with Env() as env:
+        env.backend_ok = False
+        ws = await env.godot()
+        for fault in ("E11", "E11", None):
+            await ws.send(json.dumps({
+                "type": "state", "node": "Living/AC", "values": {"power": "off", "fault": fault},
+            }))
+        await asyncio.sleep(0.5)
+        assert env.received == []
+        env.backend_ok = True
+        await env.wait_events(2, timeout=3)
+        assert [event.payload["fault"] for event in env.received] == ["E11", None]
+        await ws.close()
+
+
 async def test_invalid_critical_event_does_not_block_next_event():
     received = asyncio.Event()
 

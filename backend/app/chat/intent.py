@@ -1,20 +1,17 @@
 """Routing of chat messages and resolution against the connected device catalog."""
 import re
 from dataclasses import dataclass
-from typing import Literal
-
-from pydantic import BaseModel, ConfigDict
 
 
 DEVICE_WORDS = {
     "boiler": ("котел", "котл", "baxi"),
     "conditioner": ("кондиционер", "сплит"),
-    "heater": ("обогрев", "обогревател", "отоплен"),
+    "heater": ("обогревател",),
     "light": ("ламп", "свет", "освещен"),
     "socket": ("розетк",),
     "humidifier": ("увлажнител",),
     "vacuum": ("пылесос",),
-    "leak_protection": ("клапан", "вод", "водоснабжен"),
+    "leak_protection": ("клапан", "водоснабжен"),
     "sensor_leak": ("протечк", "затоплен"),
     "sensor_temperature": ("термометр",),
 }
@@ -32,7 +29,7 @@ ACTION = re.compile(
     r"зада(?:й|йте|ть)|настро(?:й|йте|ить)|переве(?:ди|дите|сти)|переключ(?:и|ите|ить)|"
     r"измен(?:и|ите|ить)|активиру(?:й|йте)|активировать|запуст(?:и|ите|ить)|погас(?:и|ите|ить))\b"
 )
-UNKNOWN_ROOM = re.compile(r"\b(?:в|на)\s+(?!режим\w*\b|температур\w*\b|значени\w*\b|обогрев\w*\b|охлажден\w*\b|вентиляц\w*\b|авто\b)[а-я][а-я-]+")
+UNKNOWN_ROOM = re.compile(r"\b(?:в|на)\s+(?!режим\w*\b|температур\w*\b|значени\w*\b|обогрев\w*\b|охлажден\w*\b|вентиляц\w*\b|авто\b)([а-я][а-я-]+)")
 CODES = re.compile(r"\bE\d{2}\b", re.IGNORECASE)
 NUMBERS = re.compile(r"(?<![\w])[-+]?\d+(?:[.,]\d+)?(?![\w])")
 COMPLEX = re.compile(r"\b(если|когда|потом|затем|через|кажд\w*|после|до\s+\d{1,2}:\d{2}|"
@@ -40,14 +37,7 @@ COMPLEX = re.compile(r"\b(если|когда|потом|затем|через|�
                      r"минут\w*|час\w*|и|или)\b")
 READING = re.compile(r"\b(сколько|какая|какой|покажи|показание|измерение|сейчас|текущ\w*)\b")
 DIAGNOSTIC = re.compile(r"\b(почему|неисправ\w*|ошиб\w*|диагност\w*)\b")
-
-
-class IntentProposal(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-    intent: Literal["command", "reading", "help", "clarify"]
-    operation: Literal["turn_on", "turn_off", "open_water", "close_water",
-                       "set_value", "set_mode", "none"]
-    device_id: str
+STATE = re.compile(r"\b(состояни\w*|статус|давлени\w*|включен\w*|выключен\w*|работает|открыт\w*|закрыт\w*)\b")
 
 
 @dataclass(frozen=True)
@@ -85,18 +75,27 @@ def reference(text, rooms, devices):
     for kind, aliases in DEVICE_WORDS.items():
         if any(word.startswith(alias) for alias in aliases for word in query):
             kinds.append(kind)
-    if "boiler" in kinds and "leak_protection" in kinds:
-        kinds.remove("leak_protection")  # вода в котле относится к уставке котла
-    if "conditioner" in kinds and "heater" in kinds and ("режим" in text or "на обогрев" in text):
-        kinds.remove("heater")
+    if re.search(r"\bдатчик\w*\s+температур", text) and "sensor_temperature" not in kinds:
+        kinds.append("sensor_temperature")
+    if not kinds and re.search(r"\b(?:откр|закр|перекр)\w+\s+воду\b", text):
+        kinds.append("leak_protection")
     return Reference(room_matches, tuple(exact or named), tuple(kinds))
 
 
+def unknown_reading_room(text, ref):
+    if ref.rooms:
+        return False
+    kinds = {device.type for device in ref.devices} | set(ref.types)
+    aliases = tuple(alias for kind in kinds for alias in DEVICE_WORDS.get(kind, ()))
+    return any(word != "доме" and not word.startswith(aliases) for word in UNKNOWN_ROOM.findall(text))
+
+
 def local_operation(text, verb):
-    if "режим" in text and verb.startswith(("включ", "переключ", "переве")):
+    if "режим" in text and verb.startswith(("включ", "запуст", "активир", "переключ", "переве")):
         return "set_mode"
     for prefix, operation in (
-        ("включ", "turn_on"), ("выключ", "turn_off"), ("откр", "open_water"),
+        ("включ", "turn_on"), ("запуст", "turn_on"),
+        ("выключ", "turn_off"), ("откр", "open_water"),
         ("закр", "close_water"), ("перекр", "close_water"), ("погас", "turn_off"),
     ):
         if verb.startswith(prefix):

@@ -66,14 +66,15 @@ def test_invites_sessions_and_foreign_confirmation(local):
 def test_ollama_http_schema(monkeypatch):
     import httpx
     seen=[]
+    outputs = iter(['{"reply":"Справка по E04"}', '{"reply":"Справка","commands":[]}'])
     def post(url,**kw):
         seen.append(kw["json"])
-        return httpx.Response(200,request=httpx.Request("POST",url),json={"message":{"content":
-            '{"reply":"Справка по E04","intent_type":"INFO_ONLY","sources":[],"commands":[]}'}})
+        return httpx.Response(200,request=httpx.Request("POST",url),json={"message":{"content": next(outputs)}})
     monkeypatch.setattr(httpx,"post",post)
-    assert "E04" in Ollama().ask({"question":"E04"})["reply"]
-    assert seen[0]["format"]["type"]=="object"
-    with pytest.raises(ValueError): Ollama().ask({"allowed_command":{"device_id":"boiler"}})
+    assert "E04" in Ollama().explain("Что означает E04?", [])
+    assert set(seen[0]["format"]["properties"]) == {"reply"}
+    with pytest.raises(ValueError):
+        Ollama().explain("Что означает E04?", [])
 
 
 def test_catalog_persists_and_disconnected_devices_reject_commands(local):

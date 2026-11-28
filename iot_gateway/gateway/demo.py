@@ -32,6 +32,9 @@ class DemoHub:
             d = self.devices.setdefault(ev.device_id, {"state": {}, "telemetry": {}, "last_error": None})
             if ev.kind is EventKind.STATE:
                 d["state"].update(ev.payload)
+                if "fault" in ev.payload:
+                    code = ev.payload["fault"]
+                    d["last_error"] = {"code": code} if code else None
             elif ev.kind is EventKind.TELEMETRY:
                 d["telemetry"].update(ev.payload)
             elif ev.kind is EventKind.ERROR:
